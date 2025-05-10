@@ -271,3 +271,81 @@ class VectorStore:
         except Exception as e:
             logger.error(f"重置向量数据库时出错: {str(e)}")
             return False
+            
+    def delete(self, filter: Dict[str, Any] = None, ids: List[str] = None):
+        """删除向量数据库中的文档。
+        
+        Args:
+            filter: 过滤条件，例如 {"pdf_id": 1} 将删除所有pdf_id为1的文档。
+            ids: 要删除的特定文档ID列表。
+            
+        Returns:
+            bool: 操作是否成功。
+        """
+        try:
+            # 记录删除前的文档数量
+            before_count = self.collection.count()
+            logger.info(f"删除前的向量数据库文档数量: {before_count}")
+            
+            if filter:
+                logger.info(f"根据过滤条件删除文档: {filter}")
+                # 使用过滤条件获取要删除的文档ID
+                # 首先查询符合条件的所有文档
+                query_results = self.collection.get(where=filter)
+                doc_ids = query_results.get("ids", [])
+                
+                if not doc_ids:
+                    logger.warning(f"没有找到符合条件的文档: {filter}")
+                    return True
+                
+                logger.info(f"找到 {len(doc_ids)} 个符合删除条件的文档")
+                
+                # 分批删除，避免请求过大
+                batch_size = 100
+                total_batches = (len(doc_ids) + batch_size - 1) // batch_size
+                
+                for i in range(0, len(doc_ids), batch_size):
+                    end = min(i + batch_size, len(doc_ids))
+                    batch_ids = doc_ids[i:end]
+                    batch_num = i // batch_size + 1
+                    
+                    logger.info(f"删除批次 {batch_num}/{total_batches}: {i}-{end}/{len(doc_ids)}")
+                    self.collection.delete(ids=batch_ids)
+            
+            elif ids:
+                logger.info(f"根据ID列表删除文档，ID数量: {len(ids)}")
+                # 分批删除，避免请求过大
+                batch_size = 100
+                total_batches = (len(ids) + batch_size - 1) // batch_size
+                
+                for i in range(0, len(ids), batch_size):
+                    end = min(i + batch_size, len(ids))
+                    batch_ids = ids[i:end]
+                    batch_num = i // batch_size + 1
+                    
+                    logger.info(f"删除批次 {batch_num}/{total_batches}: {i}-{end}/{len(ids)}")
+                    self.collection.delete(ids=batch_ids)
+            
+            else:
+                logger.warning("没有提供过滤条件或ID列表，不执行删除操作")
+                return False
+            
+            # 确保数据持久化
+            if hasattr(self.client, "persist"):
+                self.client.persist()
+                logger.info("数据已成功持久化")
+                
+            # 计算删除后的文档数量
+            after_count = self.collection.count()
+            deleted_count = before_count - after_count
+            
+            logger.info(f"文档删除完成，当前文档总数: {after_count}")
+            logger.info(f"实际删除了 {deleted_count} 个文档")
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"删除文档时出错: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return False

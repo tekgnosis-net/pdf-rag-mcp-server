@@ -122,7 +122,7 @@ const Dashboard = () => {
           {isConnected ? "Connected" : "Disconnected"}  
         </Text>  
         <Text fontSize="sm" color="gray.600" mt={2}>  
-          Configure in Cursor: Settings → AI & MCP → Add URL: http://localhost:8000/mcp/v1  
+          Configure in Cursor: Settings → AI & MCP → Add URL: http://localhost:7800/mcp  
         </Text>  
       </Box>  
     </Box>  

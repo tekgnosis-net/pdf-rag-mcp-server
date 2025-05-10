@@ -21,6 +21,7 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from fastapi_mcp import FastApiMCP
 from sentence_transformers import SentenceTransformer
 from sqlalchemy.orm import Session
@@ -57,10 +58,41 @@ app.add_middleware(
 
 # 确保上传目录存在
 os.makedirs("./uploads", exist_ok=True)
+# 确保静态文件目录存在
+os.makedirs("./static", exist_ok=True)
 
 # 存储活跃的MCP会话
 _active_sessions = {}
 
+# 在所有API路由定义之后挂载静态文件服务
+# 注意：这必须在所有路由定义之后，应用启动之前
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+
+# 设置favicon.ico路径
+@app.get("/favicon.ico")
+async def favicon():
+    """提供网站图标"""
+    return FileResponse("static/vite.svg")
+
+# 设置根路径提供index.html
+@app.get("/")
+async def read_root():
+    """提供前端应用入口页面"""
+    return FileResponse("static/index.html")
+
+# 重要：静态文件不要挂载到根路径，而是挂载到特定路径
+# 避免拦截WebSocket连接和API请求
+app.mount("/static", StaticFiles(directory="static"), name="static_files")
+# 注意：静态资源目录是static/static/assets，所以挂载路径是/static/static
+app.mount("/static/static", StaticFiles(directory="static/static"), name="nested_static_files")
+
+# 如果用户访问了一个不存在的路由（API和静态文件都没有匹配），
+# 则返回前端的index.html，以支持前端路由
+@app.exception_handler(404)
+async def not_found_handler(request, exc):
+    """如果路由不存在，则返回前端应用，让前端处理路由"""
+    return FileResponse("static/index.html")
 
 @app.post("/api/upload")
 async def upload_pdf(
@@ -248,11 +280,13 @@ async def delete_document(doc_id: int, db: Session = Depends(get_db)):
     if os.path.exists(doc.file_path):
         os.remove(doc.file_path)
     
+    # 从向量数据库删除相关文档
+    vector_store.delete(filter={"pdf_id": doc_id})
+    logger.info(f"已从向量数据库中删除文档ID为 {doc_id} 的条目")
+    
     # 从数据库删除记录
     db.delete(doc)
     db.commit()
-    
-    # TODO: 从向量数据库删除相关文档（未实现）
     
     return {"message": f"Document {doc.filename} deleted successfully"}
 
@@ -282,41 +316,17 @@ async def websocket_endpoint(websocket: WebSocket):
         manager.disconnect(websocket)
 
 
-@mcp_app.get("/")
-async def read_root():
-    """API根路径响应。
-    
-    Returns:
-        包含API信息的字典。
-    """
-    return {
-        "message": "MCP PDF Knowledge Base API is running",
-        "description": "PDF知识库服务，支持MCP协议集成",
-        "endpoints": {
-            "api": "/api/query",
-            "mcp": {
-                "legacy": "/mcp/v1",
-                "jsonrpc": "/jsonrpc",
-                "sse": "/sse",
-                "fastmcp": "/fastmcp"
-            },
-            "documents": "/api/documents",
-            "websocket": "/ws"
-        },
-        "version": "1.1.0",
-        "documentation": "访问 /docs 获取API文档"
-    }
-
-
 @mcp_app.get("/query")
 async def query_knowledge_base(query: str):
-    """查询知识库，优化后的MCP兼容接口。
+    """Query Knowledge Base
+    
+    Query the knowledge vector database.
     
     Args:
-        query: 查询字符串。
+        query: The search query string.
         
     Returns:
-        包含查询结果的字典。
+        Dictionary containing the query results.
     """
     request_id = str(uuid.uuid4())
     logger.info(f"接收到查询请求: {query}")
@@ -355,23 +365,36 @@ async def query_knowledge_base(query: str):
         else:
             return {"query": query, "results": []}
     
-    # 修复函数的其余部分（这里假设有更多代码）
-    context_parts = []
+    # 处理结果，包含书名和页码信息
+    formatted_results = []
     
-    for doc, meta in zip(documents, metadatas):
+    for doc, meta, distance in zip(documents, metadatas, distances):
         pdf_id = meta.get("pdf_id")
+        page_num = meta.get("page", "未知页码")
         
+        result_item = {
+            "content": doc,
+            "page": page_num,
+            "relevance": float(1 - distance),  # 转换距离为相关性分数
+            "file_id": pdf_id,
+            "filename": "未知文档"
+        }
+        
+        # 从数据库获取文档名称
         if pdf_id:
             pdf_doc = db.query(PDFDocument).filter(PDFDocument.id == pdf_id).first()
             if pdf_doc:
-                source = pdf_doc.filename
-                
-                # 假设这里有更多代码
-                
-    # 这里应该有处理结果并返回的代码
-
-    # 由于无法看到完整代码，临时返回一个有效响应
-    return {"query": query, "results": documents}
+                result_item["filename"] = pdf_doc.filename
+        
+        formatted_results.append(result_item)
+    
+    db.close()
+    logger.info(f"返回 {len(formatted_results)} 条格式化结果")
+    
+    return {
+        "query": query,
+        "results": formatted_results
+    }
 
 
 mcp = FastApiMCP(mcp_app)
@@ -393,3 +416,4 @@ if __name__ == "__main__":
 
     # 在主线程中启动 FastAPI
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
