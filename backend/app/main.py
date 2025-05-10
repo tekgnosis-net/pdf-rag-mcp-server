@@ -1,6 +1,5 @@
-from fastapi import FastAPI, File, UploadFile, Depends, HTTPException, WebSocket, WebSocketDisconnect, BackgroundTasks, Request  
+from fastapi import FastAPI, File, UploadFile, Depends, HTTPException, WebSocket, WebSocketDisconnect, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware  
-from fastapi.staticfiles import StaticFiles  
 from sqlalchemy.orm import Session  
 import os  
 import uuid  
@@ -15,9 +14,9 @@ from sentence_transformers import SentenceTransformer
 
 from fastapi_mcp import FastApiMCP
 
-
 # 初始化应用  
 app = FastAPI(title="MCP PDF Knowledge Base")  
+mcp_app = FastAPI(title="MCP PDF Knowledge MCP Server")  
 
 
 pdf_processor = PDFProcessor()  
@@ -43,26 +42,6 @@ os.makedirs("./uploads", exist_ok=True)
 
 # 存储活跃的MCP会话
 active_sessions = {}
-
-@app.get("/")  
-async def read_root():  
-    return {
-        "message": "MCP PDF Knowledge Base API is running",
-        "description": "PDF知识库服务，支持MCP协议集成",
-        "endpoints": {
-            "api": "/api/query",
-            "mcp": {
-                "legacy": "/mcp/v1",
-                "jsonrpc": "/jsonrpc",
-                "sse": "/sse",
-                "fastmcp": "/fastmcp"
-            },
-            "documents": "/api/documents",
-            "websocket": "/ws"
-        },
-        "version": "1.1.0",
-        "documentation": "访问 /docs 获取API文档"
-    }  
 
 @app.post("/api/upload")  
 async def upload_pdf(background_tasks: BackgroundTasks,   
@@ -208,7 +187,29 @@ async def websocket_endpoint(websocket: WebSocket):
     except WebSocketDisconnect:  
         manager.disconnect(websocket)  
 
-@app.get("/query")  
+
+
+@mcp_app.get("/")  
+async def read_root():  
+    return {
+        "message": "MCP PDF Knowledge Base API is running",
+        "description": "PDF知识库服务，支持MCP协议集成",
+        "endpoints": {
+            "api": "/api/query",
+            "mcp": {
+                "legacy": "/mcp/v1",
+                "jsonrpc": "/jsonrpc",
+                "sse": "/sse",
+                "fastmcp": "/fastmcp"
+            },
+            "documents": "/api/documents",
+            "websocket": "/ws"
+        },
+        "version": "1.1.0",
+        "documentation": "访问 /docs 获取API文档"
+    }  
+
+@mcp_app.get("/query")  
 async def query_knowledge_base(query: str):  
     """查询知识库，优化后的MCP兼容接口"""
     request_id = str(uuid.uuid4())
@@ -254,11 +255,22 @@ async def query_knowledge_base(query: str):
     return "\n\n---\n\n".join(context_parts)
 
 
-mcp = FastApiMCP(app)
+mcp = FastApiMCP(mcp_app)
 mcp.mount()
 
 # 启动服务  
 if __name__ == "__main__":
     import uvicorn
+    import threading
+
+        # 在单独的线程中启动指标服务
+    def run_metrics():
+        uvicorn.run(mcp_app, host="0.0.0.0", port=7800)
+    
+    # 启动指标服务线程
+    metrics_thread = threading.Thread(target=run_metrics)
+    metrics_thread.daemon = True
+    metrics_thread.start()
+
     # 在主线程中启动 FastAPI
     uvicorn.run(app, host="0.0.0.0", port=8000)
