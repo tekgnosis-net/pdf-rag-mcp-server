@@ -311,4 +311,10 @@ poetry.toml
 # LSP config files
 pyrightconfig.json
 
+# Databse
+**/chroma_db/
+*.db
+*.sqlite
+*.sqlite3
+
 # End of https://www.toptal.com/developers/gitignore/api/python,node
