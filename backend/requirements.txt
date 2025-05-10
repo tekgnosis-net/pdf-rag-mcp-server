@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+sqlalchemy
+pydantic
+PyMuPDF
+langchain
+sentence-transformers
+chromadb
+python-multipart
+aiofiles

@@ -1,0 +1,557 @@
+from fastapi import FastAPI, File, UploadFile, Depends, HTTPException, WebSocket, WebSocketDisconnect, BackgroundTasks, Request  
+from fastapi.middleware.cors import CORSMiddleware  
+from fastapi.staticfiles import StaticFiles  
+from fastapi.responses import StreamingResponse
+from sqlalchemy.orm import Session  
+import os  
+import uuid  
+import asyncio  
+import json  
+import time
+import logging
+
+from app.database import get_db, PDFDocument  
+from app.pdf_processor import PDFProcessor, processing_status  
+from app.websocket import manager  
+from app.vector_store import VectorStore  
+from sentence_transformers import SentenceTransformer  
+
+# 初始化应用  
+app = FastAPI(title="MCP PDF Knowledge Base")  
+pdf_processor = PDFProcessor()  
+embedding_model = SentenceTransformer("all-MiniLM-L6-v2")  
+vector_store = VectorStore()  
+# 添加日志记录
+logger = logging.getLogger("main")
+logger.info(f"初始化应用，向量数据库文档数量: {vector_store.get_document_count()}")
+
+# 配置CORS  
+app.add_middleware(  
+    CORSMiddleware,  
+    allow_origins=["*"],  # 在生产环境中，应该限制为前端域名  
+    allow_credentials=True,  
+    allow_methods=["*"],  
+    allow_headers=["*"],  
+)  
+
+# 确保上传目录存在  
+os.makedirs("./uploads", exist_ok=True)  
+
+# 挂载静态文件目录  
+app.mount("/static", StaticFiles(directory="static"), name="static")  
+
+# 存储活跃的MCP会话
+active_sessions = {}
+
+@app.get("/")  
+async def read_root():  
+    return {"message": "MCP PDF Knowledge Base API is running"}  
+
+@app.post("/api/upload")  
+async def upload_pdf(background_tasks: BackgroundTasks,   
+                     file: UploadFile = File(...),   
+                     db: Session = Depends(get_db)):  
+    """上传PDF文件并处理"""  
+    # 验证文件类型  
+    if not file.filename.lower().endswith('.pdf'):  
+        raise HTTPException(status_code=400, detail="Only PDF files are accepted")  
+    
+    # 检查文件是否已存在  
+    existing_doc = db.query(PDFDocument).filter(PDFDocument.filename == file.filename).first()  
+    if existing_doc:  
+        if existing_doc.processed:  
+            return {"message": "File already processed", "id": existing_doc.id}  
+        elif existing_doc.processing:  
+            return {"message": "File is currently being processed", "id": existing_doc.id}  
+    
+    # 生成唯一的文件名  
+    unique_filename = f"{uuid.uuid4()}_{file.filename}"  
+    file_path = f"./uploads/{unique_filename}"  
+    
+    # 保存文件  
+    with open(file_path, "wb") as f:  
+        file_content = await file.read()  
+        f.write(file_content)  
+        file_size = len(file_content)  
+    
+    # 创建数据库记录  
+    pdf_doc = PDFDocument(  
+        filename=file.filename,  
+        file_path=file_path,  
+        file_size=file_size,  
+        processed=False,  
+        processing=True,  
+        progress=0.0  
+    )  
+    db.add(pdf_doc)  
+    db.commit()  
+    db.refresh(pdf_doc)  
+    
+    # 在后台处理PDF  
+    processing_status[file.filename] = {"progress": 0, "status": "Queued"}  
+    background_tasks.add_task(process_pdf_background, pdf_doc.id, file_path, file.filename)  
+    
+    return {  
+        "message": "PDF uploaded and queued for processing",  
+        "id": pdf_doc.id,  
+        "filename": file.filename  
+    }  
+
+async def process_pdf_background(pdf_id: int, file_path: str, filename: str):  
+    """后台处理PDF的异步函数"""  
+    await pdf_processor.process_pdf(pdf_id, file_path, filename)  
+    # 处理完成后广播状态更新  
+    await manager.broadcast({  
+        "type": "processing_update",  
+        "filename": filename,  
+        "status": processing_status.get(filename, {})  
+    })  
+
+@app.get("/api/documents")  
+async def get_documents(db: Session = Depends(get_db)):  
+    """获取所有PDF文档的状态"""  
+    docs = db.query(PDFDocument).all()  
+    return [  
+        {  
+            "id": doc.id,  
+            "filename": doc.filename,  
+            "uploaded_at": doc.uploaded_at,  
+            "file_size": doc.file_size,  
+            "processed": doc.processed,  
+            "processing": doc.processing,  
+            "page_count": doc.page_count,  
+            "chunks_count": doc.chunks_count,  
+            "progress": doc.progress,  
+            "error": doc.error  
+        }  
+        for doc in docs  
+    ]  
+
+@app.get("/api/documents/{doc_id}")  
+async def get_document(doc_id: int, db: Session = Depends(get_db)):  
+    """获取单个PDF文档的详细信息"""  
+    doc = db.query(PDFDocument).filter(PDFDocument.id == doc_id).first()  
+    if not doc:  
+        raise HTTPException(status_code=404, detail="Document not found")  
+    
+    return {  
+        "id": doc.id,  
+        "filename": doc.filename,  
+        "uploaded_at": doc.uploaded_at,  
+        "file_size": doc.file_size,  
+        "processed": doc.processed,  
+        "processing": doc.processing,  
+        "page_count": doc.page_count,  
+        "chunks_count": doc.chunks_count,  
+        "progress": doc.progress,  
+        "error": doc.error,  
+        "status": processing_status.get(doc.filename, {"progress": doc.progress, "status": "Unknown"})  
+    }  
+
+@app.delete("/api/documents/{doc_id}")  
+async def delete_document(doc_id: int, db: Session = Depends(get_db)):  
+    """删除PDF文档"""  
+    doc = db.query(PDFDocument).filter(PDFDocument.id == doc_id).first()  
+    if not doc:  
+        raise HTTPException(status_code=404, detail="Document not found")  
+    
+    # 如果正在处理，不允许删除  
+    if doc.processing:  
+        raise HTTPException(status_code=400, detail="Cannot delete document while it's being processed")  
+    
+    # 删除文件  
+    if os.path.exists(doc.file_path):  
+        os.remove(doc.file_path)  
+    
+    # 从数据库删除记录  
+    db.delete(doc)  
+    db.commit()  
+    
+    # TODO: 从向量数据库删除相关文档（未实现）  
+    
+    return {"message": f"Document {doc.filename} deleted successfully"}  
+
+@app.websocket("/ws")  
+async def websocket_endpoint(websocket: WebSocket):  
+    """WebSocket连接处理实时更新"""  
+    await manager.connect(websocket)  
+    try:  
+        # 初始发送所有当前状态  
+        await websocket.send_json({  
+            "type": "initial_status",  
+            "status": processing_status  
+        })  
+        
+        # 保持连接活跃  
+        while True:  
+            data = await websocket.receive_text()  
+            # 这里可以处理来自客户端的消息  
+            await asyncio.sleep(1)  
+            
+    except WebSocketDisconnect:  
+        manager.disconnect(websocket)  
+
+@app.post("/api/query")  
+async def query_knowledge_base(request: Request, db: Session = Depends(get_db)):  
+    """查询知识库"""  
+    # 获取查询参数
+    query = None
+    
+    # 尝试从URL查询参数获取
+    query_params = request.query_params
+    if "query" in query_params:
+        query = query_params["query"]
+        logger.info(f"从URL查询参数获取查询: {query}")
+    
+    # 如果没有从URL获取到，尝试从请求体获取
+    if not query:
+        try:
+            # 尝试作为JSON解析
+            json_data = await request.json()
+            if "query" in json_data:
+                query = json_data["query"]
+                logger.info(f"从JSON请求体获取查询: {query}")
+        except:
+            # 不是JSON格式，尝试作为表单数据解析
+            try:
+                form_data = await request.form()
+                if "query" in form_data:
+                    query = form_data["query"]
+                    logger.info(f"从表单数据获取查询: {query}")
+            except:
+                # 最后尝试直接从请求体获取
+                body = await request.body()
+                body_str = body.decode('utf-8')
+                if body_str.startswith("query="):
+                    query = body_str[6:]
+                    logger.info(f"从请求体获取查询: {query}")
+    
+    # 如果仍然没有获取到查询
+    if not query:
+        raise HTTPException(status_code=400, detail="查询参数 'query' 是必需的")
+    
+    # 记录请求
+    logger.info(f"接收到查询请求: {query}")
+    
+    # 生成查询嵌入  
+    query_embedding = embedding_model.encode(query)  
+    
+    # 搜索向量数据库  
+    results = vector_store.search(query_embedding, n_results=5)  
+    
+    # 提取结果  
+    documents = results.get("documents", [[]])[0]  
+    metadatas = results.get("metadatas", [[]])[0]  
+    
+    # 如果没有找到结果，返回空结果
+    if not documents:
+        logger.warning(f"查询 '{query}' 没有找到结果")
+        return {
+            "query": query,
+            "results": []
+        }
+    
+    # 构建返回结果  
+    response_data = {  
+        "query": query,  
+        "results": []  
+    }
+    
+    for doc, meta in zip(documents, metadatas):  
+        pdf_id = meta.get("pdf_id")
+        source_doc = "Unknown"
+        
+        if pdf_id:
+            pdf_doc = db.query(PDFDocument).filter(PDFDocument.id == pdf_id).first()
+            if pdf_doc:
+                source_doc = pdf_doc.filename
+        
+        response_data["results"].append({
+            "content": doc,  
+            "metadata": meta,  
+            "source_document": source_doc
+        })
+    
+    logger.info(f"查询 '{query}' 返回了 {len(response_data['results'])} 条结果")
+    return response_data
+
+# MCP协议接口 - 保留原来的端点，以保持兼容性  
+@app.api_route("/mcp/v1", methods=["GET", "POST"])  
+async def legacy_mcp_endpoint(request: Request):
+    """旧版MCP协议接口，处理来自Cursor的请求"""
+    print(f"Legacy MCP Request received from {request.client}")
+    # 调用新的MCP实现
+    return await jsonrpc_endpoint(request)
+
+# 新的MCP实现 - JSONRPC端点
+@app.api_route("/jsonrpc", methods=["GET", "POST"])
+async def jsonrpc_endpoint(request: Request):
+    """MCP JSON-RPC端点"""
+    print(f"JSON-RPC Request received from {request.client}")
+    print(f"Request method: {request.method}")
+    print(f"Request headers: {request.headers}")
+    
+    # 解析请求内容
+    request_data = {}
+    if request.method == "POST":
+        try:
+            request_data = await request.json()
+            print(f"Request body: {request_data}")
+        except Exception as e:
+            print(f"Error parsing request body: {e}")
+            request_data = {}
+    
+    # 获取请求中的method和id
+    method = request_data.get("method", "")
+    req_id = request_data.get("id", str(uuid.uuid4()))
+    params = request_data.get("params", {})
+    
+    try:
+        # 如果是请求capabilities或初始化，返回服务器能力
+        if request.method == "GET" or method == "initialize" or method == "":
+            session_id = str(uuid.uuid4())
+            active_sessions[session_id] = {
+                "created_at": time.time(),
+                "last_activity": time.time()
+            }
+            
+            return {
+                "jsonrpc": "2.0",
+                "result": {
+                    "session_id": session_id,
+                    "server_info": {
+                        "name": "PDF知识库MCP服务器",
+                        "version": "1.0.0",
+                        "protocol_version": "2023-07-01",
+                        "status": "ready",
+                        "capabilities": {
+                            "methods": ["initialize", "createMessage", "listOfferings", "executeTool"],
+                            "models": [],
+                            "streaming": True,
+                            "completions": False,
+                            "chat_completions": False,
+                            "embeddings": False,
+                            "tools": True,
+                            "functions": True,
+                            "resources": ["pdf_knowledge_base"]
+                        }
+                    }
+                },
+                "id": req_id
+            }
+        
+        # 列出可用的工具
+        elif method == "listOfferings":
+            session_id = params.get("session_id", "")
+            if session_id in active_sessions:
+                active_sessions[session_id]["last_activity"] = time.time()
+                
+                return {
+                    "jsonrpc": "2.0",
+                    "result": {
+                        "tools": [
+                            {
+                                "name": "pdf_query",
+                                "description": "Query the PDF knowledge base for relevant content",
+                                "parameters": {
+                                    "type": "object",
+                                    "properties": {
+                                        "query": {
+                                            "type": "string",
+                                            "description": "The search query to find relevant PDF content"
+                                        }
+                                    },
+                                    "required": ["query"]
+                                }
+                            }
+                        ]
+                    },
+                    "id": req_id
+                }
+            else:
+                return {
+                    "jsonrpc": "2.0",
+                    "error": {
+                        "code": -32000,
+                        "message": "Invalid session ID"
+                    },
+                    "id": req_id
+                }
+        
+        # 执行工具
+        elif method == "executeTool":
+            session_id = params.get("session_id", "")
+            if session_id not in active_sessions:
+                return {
+                    "jsonrpc": "2.0",
+                    "error": {
+                        "code": -32000,
+                        "message": "Invalid session ID"
+                    },
+                    "id": req_id
+                }
+                
+            active_sessions[session_id]["last_activity"] = time.time()
+            
+            tool_name = params.get("name", "")
+            tool_params = params.get("parameters", {})
+            
+            if tool_name == "pdf_query":
+                user_query = tool_params.get("query", "")
+                
+                if not user_query:
+                    return {
+                        "jsonrpc": "2.0",
+                        "error": {
+                            "code": -32602,
+                            "message": "Invalid params: no query provided"
+                        },
+                        "id": req_id
+                    }
+                
+                # 查询知识库
+                query_embedding = embedding_model.encode(user_query)
+                results = vector_store.search(query_embedding, n_results=5)
+                
+                documents = results.get("documents", [[]])[0]
+                metadatas = results.get("metadatas", [[]])[0]
+                
+                # 如果没有找到任何文档，返回提示信息
+                if not documents:
+                    return {
+                        "jsonrpc": "2.0",
+                        "result": {
+                            "content": "没有找到与您的问题相关的信息。请尝试使用不同的关键词查询。"
+                        },
+                        "id": req_id
+                    }
+                
+                # 从数据库获取源文档信息
+                db = next(get_db())
+                context_parts = []
+                
+                for doc, meta in zip(documents, metadatas):
+                    pdf_id = meta.get("pdf_id")
+                    source = "Unknown"
+                    
+                    if pdf_id:
+                        pdf_doc = db.query(PDFDocument).filter(PDFDocument.id == pdf_id).first()
+                        if pdf_doc:
+                            source = pdf_doc.filename
+                    
+                    # 添加页码信息，如果有的话
+                    page_info = f" (页码: {meta.get('page')})" if meta.get('page') else ""
+                    
+                    context_parts.append(f"来源: {source}{page_info}\n\n{doc}")
+                
+                result_text = "\n\n---\n\n".join(context_parts) if context_parts else "没有找到相关信息。"
+                
+                return {
+                    "jsonrpc": "2.0",
+                    "result": {
+                        "content": result_text
+                    },
+                    "id": req_id
+                }
+            else:
+                return {
+                    "jsonrpc": "2.0",
+                    "error": {
+                        "code": -32601,
+                        "message": f"Tool not found: {tool_name}"
+                    },
+                    "id": req_id
+                }
+        
+        # 未知方法
+        else:
+            return {
+                "jsonrpc": "2.0",
+                "error": {
+                    "code": -32601,
+                    "message": f"Method not found: {method}"
+                },
+                "id": req_id
+            }
+    
+    except Exception as e:
+        print(f"Error in JSON-RPC endpoint: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        
+        # 返回错误响应
+        return {
+            "jsonrpc": "2.0",
+            "error": {
+                "code": -32603,
+                "message": f"Internal error: {str(e)}"
+            },
+            "id": req_id
+        }
+
+# MCP SSE端点 - Cursor主要使用此端点进行连接
+@app.get("/sse")
+async def sse_endpoint(request: Request):
+    """MCP SSE端点，Cursor用于连接和接收事件"""
+    print(f"SSE Request received from {request.client}")
+    print(f"Request headers: {request.headers}")
+    
+    async def event_generator():
+        session_id = str(uuid.uuid4())
+        active_sessions[session_id] = {
+            "created_at": time.time(),
+            "last_activity": time.time()
+        }
+        
+        try:
+            # 发送server_info事件
+            server_info = {
+                "name": "PDF知识库MCP服务器",
+                "version": "1.0.0",
+                "capabilities": {
+                    "methods": ["initialize", "createMessage", "listOfferings", "executeTool"],
+                    "models": [],
+                    "streaming": True,
+                    "completions": False,
+                    "chat_completions": False,
+                    "embeddings": False,
+                    "tools": True,
+                    "functions": True,
+                    "resources": ["pdf_knowledge_base"]
+                },
+                "status": "ready",
+                "protocol_version": "2023-07-01"
+            }
+            yield f"event: server_info\ndata: {json.dumps(server_info)}\n\n"
+            
+            # 发送session_created事件
+            yield f"event: session_created\ndata: {json.dumps({'session_id': session_id})}\n\n"
+            
+            # 持续发送heartbeat事件
+            while True:
+                active_sessions[session_id]["last_activity"] = time.time()
+                yield f"event: heartbeat\ndata: {json.dumps({'timestamp': time.time()})}\n\n"
+                await asyncio.sleep(5)  # 每5秒发送一次心跳
+                
+        except Exception as e:
+            print(f"Error in SSE endpoint: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            
+            # 清理会话
+            if session_id in active_sessions:
+                del active_sessions[session_id]
+    
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive"
+        }
+    )
+
+# 启动服务  
+if __name__ == "__main__":  
+    import uvicorn  
+    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
