@@ -1,15 +1,15 @@
-"""PDF知识库API服务。
+"""PDF Knowledge Base API Service.
 
-这个模块提供PDF知识库的API服务端点，支持上传、处理和查询PDF文件。
+This module provides API endpoints for the PDF Knowledge Base service, supporting uploading, processing, and querying PDF files.
 """
 
-# 标准库导入
+# Standard library imports
 import asyncio
 import logging
 import os
 import uuid
 
-# 第三方库导入
+# Third-party library imports
 from fastapi import (
     BackgroundTasks,
     Depends,
@@ -26,29 +26,29 @@ from fastapi_mcp import FastApiMCP
 from sentence_transformers import SentenceTransformer
 from sqlalchemy.orm import Session
 
-# 本地应用/库导入
+# Local application/library imports
 from app.database import PDFDocument, SessionLocal, get_db
 from app.pdf_processor import PDFProcessor, PROCESSING_STATUS
 from app.vector_store import VectorStore
 from app.websocket import manager
 
-# 初始化应用
+# Initialize application
 app = FastAPI(title="MCP PDF Knowledge Base")
 mcp_app = FastAPI(title="MCP PDF Knowledge MCP Server")
 
-# 初始化处理器和模型
+# Initialize processor and model
 pdf_processor = PDFProcessor()
 embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
 vector_store = VectorStore()
 
-# 配置日志记录
+# Configure logging
 logger = logging.getLogger("main")
-logger.info(f"初始化应用，向量数据库文档数量: {vector_store.get_document_count()}")
+logger.info(f"Initializing application, vector database document count: {vector_store.get_document_count()}")
 
-# 配置CORS
+# Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 在生产环境中，应该限制为前端域名
+    allow_origins=["*"],  # In production, this should be restricted to the frontend domain
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -56,42 +56,42 @@ app.add_middleware(
     max_age=86400,
 )
 
-# 确保上传目录存在
+# Ensure upload directory exists
 os.makedirs("./uploads", exist_ok=True)
-# 确保静态文件目录存在
+# Ensure static files directory exists
 os.makedirs("./static", exist_ok=True)
 
-# 存储活跃的MCP会话
+# Store active MCP sessions
 _active_sessions = {}
 
-# 在所有API路由定义之后挂载静态文件服务
-# 注意：这必须在所有路由定义之后，应用启动之前
+# Mount static file service after all API route definitions
+# Note: This must be done after route definitions but before application startup
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
-# 设置favicon.ico路径
+# Set favicon.ico path
 @app.get("/favicon.ico")
 async def favicon():
-    """提供网站图标"""
+    """Serve website icon"""
     return FileResponse("static/vite.svg")
 
-# 设置根路径提供index.html
+# Set root path to serve index.html
 @app.get("/")
 async def read_root():
-    """提供前端应用入口页面"""
+    """Serve frontend application entry page"""
     return FileResponse("static/index.html")
 
-# 重要：静态文件不要挂载到根路径，而是挂载到特定路径
-# 避免拦截WebSocket连接和API请求
+# Important: Do not mount static files to the root path, but to a specific path
+# Avoid intercepting WebSocket connections and API requests
 app.mount("/static", StaticFiles(directory="static"), name="static_files")
-# 注意：静态资源目录是static/static/assets，所以挂载路径是/static/static
+# Note: Static assets directory is static/static/assets, so the mount path is /static/static
 app.mount("/static/static", StaticFiles(directory="static/static"), name="nested_static_files")
 
-# 如果用户访问了一个不存在的路由（API和静态文件都没有匹配），
-# 则返回前端的index.html，以支持前端路由
+# If the user accesses a non-existent route (neither API nor static files match),
+# return the frontend's index.html to support frontend routing
 @app.exception_handler(404)
 async def not_found_handler(request, exc):
-    """如果路由不存在，则返回前端应用，让前端处理路由"""
+    """If the route does not exist, return the frontend application to let the frontend handle routing"""
     return FileResponse("static/index.html")
 
 @app.post("/api/upload")
@@ -100,24 +100,24 @@ async def upload_pdf(
     file: UploadFile = File(...),
     db: Session = Depends(get_db)
 ):
-    """上传PDF文件并处理。
+    """Upload and process PDF file.
     
     Args:
-        background_tasks: 后台任务管理器。
-        file: 上传的PDF文件。
-        db: 数据库会话。
+        background_tasks: Background task manager.
+        file: Uploaded PDF file.
+        db: Database session.
         
     Returns:
-        包含上传状态信息的字典。
+        Dictionary containing upload status information.
         
     Raises:
-        HTTPException: 如果文件不是PDF格式。
+        HTTPException: If file is not in PDF format.
     """
-    # 验证文件类型
+    # Validate file type
     if not file.filename.lower().endswith('.pdf'):
         raise HTTPException(status_code=400, detail="Only PDF files are accepted")
     
-    # 检查文件是否已存在
+    # Check if file already exists
     existing_doc = db.query(PDFDocument).filter(
         PDFDocument.filename == file.filename
     ).first()
@@ -131,17 +131,17 @@ async def upload_pdf(
                 "id": existing_doc.id
             }
     
-    # 生成唯一的文件名
+    # Generate unique filename
     unique_filename = f"{uuid.uuid4()}_{file.filename}"
     file_path = f"./uploads/{unique_filename}"
     
-    # 保存文件
+    # Save file
     with open(file_path, "wb") as f:
         file_content = await file.read()
         f.write(file_content)
         file_size = len(file_content)
     
-    # 创建数据库记录
+    # Create database record
     pdf_doc = PDFDocument(
         filename=file.filename,
         file_path=file_path,
@@ -154,7 +154,7 @@ async def upload_pdf(
     db.commit()
     db.refresh(pdf_doc)
     
-    # 在后台处理PDF
+    # Process PDF in background
     PROCESSING_STATUS[file.filename] = {"progress": 0, "status": "Queued"}
     background_tasks.add_task(
         _process_pdf_background,
@@ -171,15 +171,15 @@ async def upload_pdf(
 
 
 async def _process_pdf_background(pdf_id: int, file_path: str, filename: str):
-    """后台处理PDF的异步函数。
+    """Asynchronous function to process PDF in the background.
     
     Args:
-        pdf_id: PDF文档的ID。
-        file_path: PDF文件路径。
-        filename: 原始文件名。
+        pdf_id: PDF document ID.
+        file_path: Path to the PDF file.
+        filename: Original filename.
     """
     await pdf_processor.process_pdf(pdf_id, file_path, filename)
-    # 处理完成后广播状态更新
+    # Broadcast status update after processing is complete
     await manager.broadcast({
         "type": "processing_update",
         "filename": filename,
@@ -189,13 +189,13 @@ async def _process_pdf_background(pdf_id: int, file_path: str, filename: str):
 
 @app.get("/api/documents")
 async def get_documents(db: Session = Depends(get_db)):
-    """获取所有PDF文档的状态。
+    """Get status of all PDF documents.
     
     Args:
-        db: 数据库会话。
+        db: Database session.
         
     Returns:
-        包含所有文档信息的列表。
+        List containing information for all documents.
     """
     docs = db.query(PDFDocument).all()
     return [
@@ -217,17 +217,17 @@ async def get_documents(db: Session = Depends(get_db)):
 
 @app.get("/api/documents/{doc_id}")
 async def get_document(doc_id: int, db: Session = Depends(get_db)):
-    """获取单个PDF文档的详细信息。
+    """Get detailed information for a single PDF document.
     
     Args:
-        doc_id: 文档ID。
-        db: 数据库会话。
+        doc_id: Document ID.
+        db: Database session.
         
     Returns:
-        包含文档详细信息的字典。
+        Dictionary containing detailed document information.
         
     Raises:
-        HTTPException: 如果文档未找到。
+        HTTPException: If document is not found.
     """
     doc = db.query(PDFDocument).filter(PDFDocument.id == doc_id).first()
     if not doc:
@@ -253,38 +253,38 @@ async def get_document(doc_id: int, db: Session = Depends(get_db)):
 
 @app.delete("/api/documents/{doc_id}")
 async def delete_document(doc_id: int, db: Session = Depends(get_db)):
-    """删除PDF文档。
+    """Delete a PDF document.
     
     Args:
-        doc_id: 文档ID。
-        db: 数据库会话。
+        doc_id: Document ID.
+        db: Database session.
         
     Returns:
-        包含删除状态信息的字典。
+        Dictionary containing deletion status information.
         
     Raises:
-        HTTPException: 如果文档未找到或正在处理中。
+        HTTPException: If document is not found or is currently being processed.
     """
     doc = db.query(PDFDocument).filter(PDFDocument.id == doc_id).first()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
     
-    # 如果正在处理，不允许删除
+    # Don't allow deletion if document is being processed
     if doc.processing:
         raise HTTPException(
             status_code=400,
             detail="Cannot delete document while it's being processed"
         )
     
-    # 删除文件
+    # Delete file
     if os.path.exists(doc.file_path):
         os.remove(doc.file_path)
     
-    # 从向量数据库删除相关文档
+    # Delete related documents from vector database
     vector_store.delete(filter={"pdf_id": doc_id})
-    logger.info(f"已从向量数据库中删除文档ID为 {doc_id} 的条目")
+    logger.info(f"Deleted entries with document ID {doc_id} from vector database")
     
-    # 从数据库删除记录
+    # Delete record from database
     db.delete(doc)
     db.commit()
     
@@ -293,23 +293,23 @@ async def delete_document(doc_id: int, db: Session = Depends(get_db)):
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    """WebSocket连接处理实时更新。
+    """WebSocket connection handler for real-time updates.
     
     Args:
-        websocket: WebSocket连接。
+        websocket: WebSocket connection.
     """
     await manager.connect(websocket)
     try:
-        # 初始发送所有当前状态
+        # Initially send all current statuses
         await websocket.send_json({
             "type": "initial_status",
             "status": PROCESSING_STATUS
         })
         
-        # 保持连接活跃
+        # Keep connection alive
         while True:
             data = await websocket.receive_text()
-            # 这里可以处理来自客户端的消息
+            # Can process messages from the client here
             await asyncio.sleep(1)
             
     except WebSocketDisconnect:
@@ -329,58 +329,58 @@ async def query_knowledge_base(query: str):
         Dictionary containing the query results.
     """
     request_id = str(uuid.uuid4())
-    logger.info(f"接收到查询请求: {query}")
+    logger.info(f"Received query request: {query}")
     
-    # 记录向量数据库大小
+    # Record vector database size
     doc_count = vector_store.get_document_count()
-    logger.info(f"当前向量数据库文档数量: {doc_count}")
+    logger.info(f"Current vector database document count: {doc_count}")
     
-    # 生成查询嵌入并搜索
+    # Generate query embedding and search
     query_embedding = embedding_model.encode(query)
     results = vector_store.search(query_embedding, n_results=5)
     
-    # 提取结果
+    # Extract results
     documents = results.get("documents", [[]])[0]
     metadatas = results.get("metadatas", [[]])[0]
     distances = results.get("distances", [[]])[0]
 
     db = SessionLocal()
     
-    # 记录查询结果数量
-    logger.info(f"查询 '{query}' 找到 {len(documents)} 条结果")
+    # Log query result count
+    logger.info(f"Query '{query}' found {len(documents)} results")
     
-    # 没有结果的情况
+    # Handle no results case
     if not documents:
-        logger.warning(f"查询 '{query}' 没有找到结果")
+        logger.warning(f"Query '{query}' found no results")
         
-        # 使用is_mcp_request变量前应该检查它是否存在
+        # Check if is_mcp_request variable exists before using it
         if 'is_mcp_request' in locals() and is_mcp_request:
             return {
                 "jsonrpc": "2.0",
                 "result": {
-                    "content": "没有找到与您的问题相关的信息。请尝试使用不同的关键词查询。"
+                    "content": "No information related to your question was found. Please try using different keywords for your query."
                 },
                 "id": request_id
             }
         else:
             return {"query": query, "results": []}
     
-    # 处理结果，包含书名和页码信息
+    # Process results, including document name and page information
     formatted_results = []
     
     for doc, meta, distance in zip(documents, metadatas, distances):
         pdf_id = meta.get("pdf_id")
-        page_num = meta.get("page", "未知页码")
+        page_num = meta.get("page", "Unknown page")
         
         result_item = {
             "content": doc,
             "page": page_num,
-            "relevance": float(1 - distance),  # 转换距离为相关性分数
+            "relevance": float(1 - distance),  # Convert distance to relevance score
             "file_id": pdf_id,
-            "filename": "未知文档"
+            "filename": "Unknown document"
         }
         
-        # 从数据库获取文档名称
+        # Get document name from database
         if pdf_id:
             pdf_doc = db.query(PDFDocument).filter(PDFDocument.id == pdf_id).first()
             if pdf_doc:
@@ -389,7 +389,7 @@ async def query_knowledge_base(query: str):
         formatted_results.append(result_item)
     
     db.close()
-    logger.info(f"返回 {len(formatted_results)} 条格式化结果")
+    logger.info(f"Returning {len(formatted_results)} formatted results")
     
     return {
         "query": query,
@@ -400,20 +400,20 @@ async def query_knowledge_base(query: str):
 mcp = FastApiMCP(mcp_app)
 mcp.mount()
 
-# 启动服务  
+# Start service
 if __name__ == "__main__":
     import uvicorn
     import threading
 
-    # 在单独的线程中启动指标服务
+    # Start metrics service in a separate thread
     def run_mcp_server():
         uvicorn.run(mcp_app, host="0.0.0.0", port=7800)
     
-    # 启动指标服务线程
+    # Start metrics service thread
     metrics_thread = threading.Thread(target=run_mcp_server)
     metrics_thread.daemon = True
     metrics_thread.start()
 
-    # 在主线程中启动 FastAPI
+    # Start FastAPI in the main thread
     uvicorn.run(app, host="0.0.0.0", port=8000)
 

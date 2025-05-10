@@ -42,28 +42,28 @@ const Dashboard = () => {
 
   useEffect(() => {  
     fetchDocuments();  
-    // 设置定时刷新  
+    // Set up refresh interval  
     const intervalId = setInterval(fetchDocuments, 10000);  
     return () => clearInterval(intervalId);  
   }, []);  
 
-  // 合并文档状态与WebSocket状态  
+  // Merge document status with WebSocket status  
   const enhancedDocuments = documents.map(doc => {  
     const wsStatus = processingStatus[doc.filename];  
     return {  
       ...doc,  
-      // 使用WebSocket状态更新进度（如果可用）  
+      // Update progress with WebSocket status if available  
       progress: wsStatus ? wsStatus.progress : doc.progress,  
       statusText: wsStatus ? wsStatus.status : (doc.processed ? "Completed" : "Processing"),  
     };  
   });  
 
-  // 分离已处理和处理中的文档  
+  // Separate processed and processing documents  
   const processedDocs = enhancedDocuments.filter(doc => doc.processed);  
   const processingDocs = enhancedDocuments.filter(doc => !doc.processed);  
 
   const handleFileUploaded = () => {  
-    // 刷新文档列表  
+    // Refresh document list  
     fetchDocuments();  
   };  
 

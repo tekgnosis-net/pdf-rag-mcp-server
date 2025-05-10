@@ -1,57 +1,57 @@
-"""WebSocket管理模块。
+"""WebSocket Management Module.
 
-该模块提供WebSocket连接管理，用于向客户端推送实时状态更新。
+This module provides WebSocket connection management for pushing real-time status updates to clients.
 """
 
-# 标准库导入
+# Standard library imports
 from typing import Any, Dict, List
 
-# 第三方库导入
+# Third-party library imports
 from fastapi import WebSocket
 
 
 class ConnectionManager:
-    """WebSocket连接管理器，负责处理客户端连接和消息广播。"""
+    """WebSocket connection manager, responsible for handling client connections and broadcasting messages."""
     
     def __init__(self):
-        """初始化连接管理器。"""
+        """Initialize connection manager."""
         self.active_connections: List[WebSocket] = []
 
     async def connect(self, websocket: WebSocket):
-        """接受WebSocket连接并保存。
+        """Accept and save WebSocket connection.
         
         Args:
-            websocket: WebSocket连接对象。
+            websocket: WebSocket connection object.
         """
         await websocket.accept()
         self.active_connections.append(websocket)
 
     def disconnect(self, websocket: WebSocket):
-        """断开WebSocket连接。
+        """Disconnect WebSocket connection.
         
         Args:
-            websocket: WebSocket连接对象。
+            websocket: WebSocket connection object.
         """
         self.active_connections.remove(websocket)
 
     async def broadcast(self, message: Dict[str, Any]):
-        """向所有活跃连接广播消息。
+        """Broadcast message to all active connections.
         
         Args:
-            message: 要广播的消息。
+            message: Message to broadcast.
         """
         for connection in self.active_connections:
             await connection.send_json(message)
             
     async def send_personal_message(self, message: Dict[str, Any], websocket: WebSocket):
-        """向特定连接发送个人消息。
+        """Send personal message to specific connection.
         
         Args:
-            message: 要发送的消息。
-            websocket: 接收消息的WebSocket连接。
+            message: Message to send.
+            websocket: WebSocket connection to receive the message.
         """
         await websocket.send_json(message)
 
 
-# 创建连接管理器实例
+# Create connection manager instance
 manager = ConnectionManager()

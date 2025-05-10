@@ -1,19 +1,19 @@
-"""向量存储模块。
+"""Vector Storage Module.
 
-该模块提供向量数据库接口，用于存储和检索PDF文档的向量表示。
+This module provides a vector database interface for storing and retrieving vector representations of PDF documents.
 """
 
-# 标准库导入
+# Standard library imports
 import logging
 import os
 from typing import Any, Dict, List, Optional
 
-# 第三方库导入
+# Third-party library imports
 import chromadb
 import numpy as np
 from chromadb.config import Settings
 
-# 配置日志记录
+# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -22,39 +22,39 @@ logger = logging.getLogger("vector_store")
 
 
 class VectorStore:
-    """向量存储类，用于管理和访问向量数据库。"""
+    """Vector storage class for managing and accessing the vector database."""
     
     def __init__(self, persist_directory=None):
-        """初始化向量存储。
+        """Initialize vector storage.
         
         Args:
-            persist_directory: 向量数据库持久化目录，如果为None则使用默认路径。
+            persist_directory: Vector database persistence directory, if None then use default path.
         """
-        # 使用绝对路径
+        # Use absolute path
         if persist_directory is None:
-            # 获取当前文件的绝对路径
+            # Get absolute path of current file
             current_dir = os.path.dirname(os.path.abspath(__file__))
-            # 回退到backend目录
+            # Step back to backend directory
             backend_dir = os.path.dirname(current_dir)
             persist_directory = os.path.join(backend_dir, "chroma_db")
         
-        # 将相对路径转换为绝对路径
+        # Convert relative path to absolute path
         persist_directory = os.path.abspath(persist_directory)
         
-        logger.info(f"初始化向量数据库，持久化目录: {persist_directory}")
+        logger.info(f"Initializing vector database, persistence directory: {persist_directory}")
         
-        # 确保目录存在
+        # Ensure directory exists
         os.makedirs(persist_directory, exist_ok=True)
         
         try:
-            # 使用持久化配置
+            # Use persistence configuration
             self.client = chromadb.PersistentClient(path=persist_directory)
             self.collection = self.client.get_or_create_collection("pdf_documents")
             logger.info(
-                f"成功连接向量数据库，当前文档数量: {self.collection.count()}"
+                f"Successfully connected to vector database, current document count: {self.collection.count()}"
             )
         except Exception as e:
-            logger.error(f"连接向量数据库时出错: {str(e)}")
+            logger.error(f"Error connecting to vector database: {str(e)}")
             raise
     
     def add_documents(
@@ -63,57 +63,57 @@ class VectorStore:
         embeddings: np.ndarray, 
         metadatas: Optional[List[Dict[str, Any]]] = None
     ):
-        """添加文档到向量数据库。
+        """Add documents to the vector database.
         
         Args:
-            chunks: 文本块列表。
-            embeddings: 对应的向量嵌入数组。
-            metadatas: 元数据列表，包含每个文本块的相关信息。
+            chunks: List of text chunks.
+            embeddings: Corresponding vector embeddings array.
+            metadatas: List of metadata, containing relevant information for each text chunk.
             
         Returns:
-            bool: 操作是否成功。
+            bool: Whether the operation was successful.
         """
         try:
-            # 记录添加前的文档数量
+            # Record document count before adding
             before_count = self.collection.count()
-            logger.info(f"添加前的向量数据库文档数量: {before_count}")
+            logger.info(f"Vector database document count before adding: {before_count}")
             
-            # 为每个文档生成唯一ID
+            # Generate unique ID for each document
             ids = [f"doc_{meta['pdf_id']}_{meta['chunk_id']}" for meta in metadatas]
             
-            logger.info(f"正在添加 {len(chunks)} 个文档到向量数据库")
+            logger.info(f"Adding {len(chunks)} documents to vector database")
             if chunks:
-                logger.info(f"示例文档: {chunks[0][:100]}...")
-                logger.info(f"示例元数据: {metadatas[0]}")
-                logger.info(f"示例ID: {ids[0]}")
+                logger.info(f"Sample document: {chunks[0][:100]}...")
+                logger.info(f"Sample metadata: {metadatas[0]}")
+                logger.info(f"Sample ID: {ids[0]}")
             
-            # 检查是否存在重复ID，如果存在则先删除
+            # Check for duplicate IDs, delete them first if they exist
             try:
-                # 尝试获取现有ID列表
+                # Try to get existing ID list
                 existing_ids = set()
                 for i in range(0, len(ids), 100):
                     batch_ids = ids[i:i+100]
-                    # 检查每个ID是否存在
+                    # Check if each ID exists
                     for id in batch_ids:
                         try:
                             self.collection.get(ids=[id])
                             existing_ids.add(id)
                         except Exception:
-                            # ID不存在，忽略错误
+                            # ID doesn't exist, ignore error
                             pass
                 
-                # 如果有重复ID，先删除
+                # If there are duplicate IDs, delete them first
                 if existing_ids:
-                    logger.warning(f"发现 {len(existing_ids)} 个重复ID，将先删除")
-                    # 分批删除，每次最多100个
+                    logger.warning(f"Found {len(existing_ids)} duplicate IDs, will delete them first")
+                    # Delete in batches, max 100 at a time
                     for i in range(0, len(existing_ids), 100):
                         batch_ids = list(existing_ids)[i:i+100]
                         self.collection.delete(ids=batch_ids)
-                    logger.info(f"已删除重复ID")
+                    logger.info(f"Duplicate IDs deleted")
             except Exception as e:
-                logger.warning(f"检查重复ID时出错: {str(e)}")
+                logger.warning(f"Error checking for duplicate IDs: {str(e)}")
             
-            # 分批添加，避免过大的请求
+            # Add in batches to avoid oversized requests
             batch_size = 100
             total_batches = (len(chunks) + batch_size - 1) // batch_size
             
@@ -121,7 +121,7 @@ class VectorStore:
                 end = min(i + batch_size, len(chunks))
                 batch_num = i // batch_size + 1
                 logger.info(
-                    f"添加批次 {batch_num}/{total_batches}: "
+                    f"Adding batch {batch_num}/{total_batches}: "
                     f"{i}-{end}/{len(chunks)}"
                 )
                 
@@ -130,15 +130,15 @@ class VectorStore:
                 batch_metadatas = metadatas[i:end]
                 batch_ids = ids[i:end]
                 
-                # 检查数据合法性
+                # Check data legality
                 for j, (doc, emb, meta, id) in enumerate(zip(
                     batch_chunks, batch_embeddings, batch_metadatas, batch_ids
                 )):
                     if not doc or not isinstance(doc, str):
-                        logger.warning(f"跳过无效文档 #{i+j}: {doc}")
+                        logger.warning(f"Skipping invalid document #{i+j}: {doc}")
                         continue
                 
-                # 添加文档
+                # Add document
                 try:
                     self.collection.add(
                         documents=batch_chunks,
@@ -146,37 +146,37 @@ class VectorStore:
                         metadatas=batch_metadatas,
                         ids=batch_ids
                     )
-                    logger.info(f"批次 {batch_num} 添加成功")
+                    logger.info(f"Batch {batch_num} added successfully")
                 except Exception as e:
-                    logger.error(f"添加批次 {batch_num} 时出错: {str(e)}")
-                    # 继续处理其他批次，不要中断整个过程
+                    logger.error(f"Error adding batch {batch_num}: {str(e)}")
+                    # Continue processing other batches, don't interrupt the process
             
-            # 确保数据持久化
+            # Ensure data persistence
             try:
                 if hasattr(self.client, "persist"):
                     self.client.persist()
-                    logger.info("数据已成功持久化")
+                    logger.info("Data persisted successfully")
             except Exception as e:
-                logger.error(f"持久化数据时出错: {str(e)}")
+                logger.error(f"Error persisting data: {str(e)}")
             
-            # 计算添加后的文档数量
+            # Calculate document count after adding
             after_count = self.collection.count()
             added_count = after_count - before_count
             
-            logger.info(f"文档添加完成，当前文档总数: {after_count}")
-            logger.info(f"实际添加了 {added_count} 个文档")
+            logger.info(f"Document addition completed, current document total: {after_count}")
+            logger.info(f"Actually added {added_count} documents")
             
-            # 如果文档数量没有变化，记录警告
+            # If document count didn't change, record warning
             if added_count <= 0:
                 logger.warning(
-                    "警告: 向量数据库文档数量未增加，可能有重复ID或添加失败"
+                    "Warning: Vector database document count did not increase, possibly duplicate IDs or addition failure"
                 )
-                # 返回True，因为这可能是正常情况（所有文档都是重复的）
+                # Return True, because this could be normal (all documents are duplicates)
                 return True
             
             return True
         except Exception as e:
-            logger.error(f"添加文档到向量数据库时出错: {str(e)}")
+            logger.error(f"Error adding documents to vector database: {str(e)}")
             import traceback
             logger.error(traceback.format_exc())
             return False
@@ -187,18 +187,18 @@ class VectorStore:
         n_results: int = 5,
         filter_criteria: Optional[Dict[str, Any]] = None
     ):
-        """在向量数据库中搜索相关文档。
+        """Search for relevant documents in the vector database.
         
         Args:
-            query_embedding: 查询的向量嵌入。
-            n_results: 返回结果的数量。
-            filter_criteria: 过滤条件。
+            query_embedding: Query vector embedding.
+            n_results: Number of results to return.
+            filter_criteria: Filter conditions.
             
         Returns:
-            Dict: 包含搜索结果的字典。
+            Dict: Dictionary containing search results.
         """
         try:
-            logger.info(f"执行向量搜索，请求结果数量: {n_results}")
+            logger.info(f"Executing vector search, requested result count: {n_results}")
             
             query_params = {
                 "query_embeddings": [query_embedding.tolist()],
@@ -207,15 +207,15 @@ class VectorStore:
             
             if filter_criteria:
                 query_params["where"] = filter_criteria
-                logger.info(f"应用过滤条件: {filter_criteria}")
+                logger.info(f"Applied filter criteria: {filter_criteria}")
             
-            # 获取向量数据库中的总文档数
+            # Get total document count in vector database
             total_docs = self.collection.count()
-            logger.info(f"向量数据库中的总文档数量: {total_docs}")
+            logger.info(f"Total document count in vector database: {total_docs}")
             
-            # 如果没有文档，直接返回空结果
+            # If there are no documents, return empty result
             if total_docs == 0:
-                logger.warning("向量数据库中没有文档，无法执行搜索")
+                logger.warning("Vector database has no documents, cannot execute search")
                 return {
                     "documents": [[]],
                     "metadatas": [[]],
@@ -224,83 +224,83 @@ class VectorStore:
                 
             results = self.collection.query(**query_params)
             
-            # 记录搜索结果
+            # Record search results
             doc_count = len(results.get("documents", [[]])[0])
-            logger.info(f"搜索完成，找到 {doc_count} 条结果")
+            logger.info(f"Search completed, found {doc_count} results")
             if doc_count > 0:
-                logger.info(f"第一条结果预览: {results['documents'][0][0][:100]}...")
+                logger.info(f"First result preview: {results['documents'][0][0][:100]}...")
             
             return results
         except Exception as e:
-            logger.error(f"向量搜索时出错: {str(e)}")
+            logger.error(f"Error executing vector search: {str(e)}")
             import traceback
             logger.error(traceback.format_exc())
             return {"documents": [[]], "metadatas": [[]], "distances": [[]]}
     
     def get_document_count(self):
-        """获取向量数据库中的文档数量。
+        """Get the document count in the vector database.
         
         Returns:
-            int: 文档数量。
+            int: Document count.
         """
         try:
             count = self.collection.count()
-            logger.info(f"向量数据库中的文档数量: {count}")
+            logger.info(f"Total document count in vector database: {count}")
             return count
         except Exception as e:
-            logger.error(f"获取文档数量时出错: {str(e)}")
+            logger.error(f"Error getting document count: {str(e)}")
             return 0
             
     def reset(self):
-        """清空向量数据库（用于测试和调试）。
+        """Reset the vector database (for testing and debugging).
         
         Returns:
-            bool: 操作是否成功。
+            bool: Whether the operation was successful.
         """
         try:
-            logger.info("正在重置向量数据库...")
+            logger.info("Resetting vector database...")
             self.client.delete_collection("pdf_documents")
             self.collection = self.client.get_or_create_collection("pdf_documents")
             
-            # 确保数据持久化
+            # Ensure data persistence
             if hasattr(self.client, "persist"):
                 self.client.persist()
                 
-            logger.info("向量数据库已重置")
+            logger.info("Vector database reset")
             return True
         except Exception as e:
-            logger.error(f"重置向量数据库时出错: {str(e)}")
+            logger.error(f"Error resetting vector database: {str(e)}")
             return False
             
     def delete(self, filter: Dict[str, Any] = None, ids: List[str] = None):
-        """删除向量数据库中的文档。
+        """Delete documents from the vector database.
         
         Args:
-            filter: 过滤条件，例如 {"pdf_id": 1} 将删除所有pdf_id为1的文档。
-            ids: 要删除的特定文档ID列表。
+            filter: Filter condition, e.g. {"pdf_id": 1} will delete all documents with pdf_id of 1.
+            ids: List of specific document IDs to delete.
             
         Returns:
-            bool: 操作是否成功。
+            bool: Whether the operation was successful.
         """
         try:
-            # 记录删除前的文档数量
+            # Record document count before deleting
             before_count = self.collection.count()
-            logger.info(f"删除前的向量数据库文档数量: {before_count}")
+            logger.info(f"Vector database document count before deleting: {before_count}")
             
             if filter:
-                logger.info(f"根据过滤条件删除文档: {filter}")
-                # 使用过滤条件获取要删除的文档ID
-                # 首先查询符合条件的所有文档
+                logger.info(f"Deleting documents based on filter: {filter}")
+                # Use filter to get documents to delete
+                # First query all documents that match the condition
                 query_results = self.collection.get(where=filter)
                 doc_ids = query_results.get("ids", [])
                 
                 if not doc_ids:
-                    logger.warning(f"没有找到符合条件的文档: {filter}")
+                    logger.warning(f"No documents found that match the condition: {filter}")
                     return True
                 
-                logger.info(f"找到 {len(doc_ids)} 个符合删除条件的文档")
+                logger.info(f"Found {len(doc_ids)} documents that match deletion condition")
                 
-                # 分批删除，避免请求过大
+                # Delete in batches to avoid oversized requests
                 batch_size = 100
                 total_batches = (len(doc_ids) + batch_size - 1) // batch_size
                 
@@ -309,12 +309,12 @@ class VectorStore:
                     batch_ids = doc_ids[i:end]
                     batch_num = i // batch_size + 1
                     
-                    logger.info(f"删除批次 {batch_num}/{total_batches}: {i}-{end}/{len(doc_ids)}")
+                    logger.info(f"Deleting batch {batch_num}/{total_batches}: {i}-{end}/{len(doc_ids)}")
                     self.collection.delete(ids=batch_ids)
             
             elif ids:
-                logger.info(f"根据ID列表删除文档，ID数量: {len(ids)}")
-                # 分批删除，避免请求过大
+                logger.info(f"Deleting documents based on ID list, ID count: {len(ids)}")
+                # Delete in batches to avoid oversized requests
                 batch_size = 100
                 total_batches = (len(ids) + batch_size - 1) // batch_size
                 
@@ -323,29 +323,29 @@ class VectorStore:
                     batch_ids = ids[i:end]
                     batch_num = i // batch_size + 1
                     
-                    logger.info(f"删除批次 {batch_num}/{total_batches}: {i}-{end}/{len(ids)}")
+                    logger.info(f"Deleting batch {batch_num}/{total_batches}: {i}-{end}/{len(ids)}")
                     self.collection.delete(ids=batch_ids)
             
             else:
-                logger.warning("没有提供过滤条件或ID列表，不执行删除操作")
+                logger.warning("No filter or ID list provided, no deletion operation executed")
                 return False
             
-            # 确保数据持久化
+            # Ensure data persistence
             if hasattr(self.client, "persist"):
                 self.client.persist()
-                logger.info("数据已成功持久化")
+                logger.info("Data persisted successfully")
                 
-            # 计算删除后的文档数量
+            # Calculate document count after deleting
             after_count = self.collection.count()
             deleted_count = before_count - after_count
             
-            logger.info(f"文档删除完成，当前文档总数: {after_count}")
-            logger.info(f"实际删除了 {deleted_count} 个文档")
+            logger.info(f"Document deletion completed, current document total: {after_count}")
+            logger.info(f"Actually deleted {deleted_count} documents")
             
             return True
             
         except Exception as e:
-            logger.error(f"删除文档时出错: {str(e)}")
+            logger.error(f"Error deleting documents: {str(e)}")
             import traceback
             logger.error(traceback.format_exc())
             return False

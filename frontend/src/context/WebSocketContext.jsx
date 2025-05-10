@@ -47,7 +47,7 @@ export const WebSocketProvider = ({ children }) => {
           duration: 3000,  
           isClosable: true,  
         });  
-        // 尝试重连 3 秒后
+        // Try to reconnect after 3 seconds
         reconnectTimer = setTimeout(() => {
           connect();
         }, 3000);
@@ -65,7 +65,7 @@ export const WebSocketProvider = ({ children }) => {
       };  
     };
     connect();
-    // 清理函数  
+    // Cleanup function  
     return () => {  
       if (ws && ws.readyState === WebSocket.OPEN) {  
         ws.close();  

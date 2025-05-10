@@ -56,7 +56,7 @@ const PDFView = () => {
 
   useEffect(() => {  
     fetchDocument();  
-    // 设置定时刷新  
+    // Set up refresh interval  
     const intervalId = setInterval(fetchDocument, 5000);  
     return () => clearInterval(intervalId);  
   }, [id]);  
@@ -101,16 +101,19 @@ const PDFView = () => {
     );  
   }  
 
-  // 合并WebSocket状态  
-  let wsStatus = processingStatus[document.filename];
-  if (!wsStatus && document.id) {
-    wsStatus = processingStatus[document.id];
-  }
-  const enhancedDocument = {  
-    ...document,  
-    progress: wsStatus ? wsStatus.progress : document.progress,  
-    statusText: wsStatus ? wsStatus.status : (document.processed ? "Completed" : "Processing"),  
-  };  
+  // Merge WebSocket status
+  useEffect(() => {
+    if (processingStatus && document?.filename) {
+      const wsStatus = processingStatus[document.filename];
+      if (wsStatus) {
+        setDocument(prev => ({
+          ...prev,
+          progress: wsStatus.progress,
+          status: wsStatus.status
+        }));
+      }
+    }
+  }, [processingStatus, document?.filename]);
 
   const formatFileSize = (bytes) => {  
     if (bytes < 1024) return bytes + ' B';  
@@ -130,7 +133,7 @@ const PDFView = () => {
       </Breadcrumb>  
 
       <Flex justifyContent="space-between" alignItems="center" mb={6}>  
-        <Heading size="lg">{enhancedDocument.filename}</Heading>  
+        <Heading size="lg">{document.filename}</Heading>  
         <Button   
           as={RouterLink}   
           to="/"   
@@ -147,22 +150,22 @@ const PDFView = () => {
           <VStack align="stretch" spacing={3}>  
             <Flex justify="space-between">  
               <Text fontWeight="medium">File Size:</Text>  
-              <Text>{formatFileSize(enhancedDocument.file_size)}</Text>  
+              <Text>{formatFileSize(document.file_size)}</Text>  
             </Flex>  
             <Flex justify="space-between">  
               <Text fontWeight="medium">Uploaded:</Text>  
-              <Text>{format(new Date(enhancedDocument.uploaded_at), 'PPpp')}</Text>  
+              <Text>{format(new Date(document.uploaded_at), 'PPpp')}</Text>  
             </Flex>  
             <Flex justify="space-between">  
               <Text fontWeight="medium">Status:</Text>  
-              <Badge colorScheme={enhancedDocument.processed ? "green" : (enhancedDocument.error ? "red" : "blue")}>  
-                {enhancedDocument.error ? "Error" : (enhancedDocument.processed ? "Completed" : "Processing")}  
+              <Badge colorScheme={document.processed ? "green" : (document.error ? "red" : "blue")}>  
+                {document.error ? "Error" : (document.processed ? "Completed" : "Processing")}  
               </Badge>  
             </Flex>  
-            {enhancedDocument.error && (  
+            {document.error && (  
               <Box>  
                 <Text fontWeight="medium" color="red.500">Error:</Text>  
-                <Text fontSize="sm" color="red.500">{enhancedDocument.error}</Text>  
+                <Text fontSize="sm" color="red.500">{document.error}</Text>  
               </Box>  
             )}  
           </VStack>  
@@ -173,12 +176,12 @@ const PDFView = () => {
           <SimpleGrid columns={2} spacing={4} mb={4}>  
             <Stat>  
               <StatLabel>Pages</StatLabel>  
-              <StatNumber>{enhancedDocument.page_count}</StatNumber>  
+              <StatNumber>{document.page_count}</StatNumber>  
               <StatHelpText>Total pages in document</StatHelpText>  
             </Stat>  
             <Stat>  
               <StatLabel>Text Chunks</StatLabel>  
-              <StatNumber>{enhancedDocument.chunks_count}</StatNumber>  
+              <StatNumber>{document.chunks_count}</StatNumber>  
               <StatHelpText>Processed for embedding</StatHelpText>  
             </Stat>  
           </SimpleGrid>  
@@ -186,8 +189,8 @@ const PDFView = () => {
           <Box mt={4}>  
             <Text fontWeight="medium" mb={2}>Processing Progress:</Text>  
             <ProgressBar   
-              value={enhancedDocument.progress}   
-              status={enhancedDocument.statusText}   
+              value={document.progress}   
+              status={document.status}   
               showPercentage={true}  
             />  
           </Box>  
@@ -207,7 +210,7 @@ const PDFView = () => {
           <Button   
             leftIcon={<FiTrash />}   
             colorScheme="red"  
-            isDisabled={enhancedDocument.processing}  
+            isDisabled={document.processing}  
             onClick={handleDelete}  
           >  
             Delete Document  
@@ -218,7 +221,7 @@ const PDFView = () => {
       <Box bg="white" p={5} shadow="md" borderRadius="md">  
         <Heading size="md" mb={4}>MCP Integration</Heading>  
         <Text mb={4}>  
-          This document {enhancedDocument.processed ? "is" : "will be"} available through the MCP protocol once processing is complete.  
+          This document {document.processed ? "is" : "will be"} available through the MCP protocol once processing is complete.  
         </Text>  
         
         <HStack>  

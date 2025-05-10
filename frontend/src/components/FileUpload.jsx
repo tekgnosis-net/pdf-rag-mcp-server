@@ -23,13 +23,13 @@ const FileUpload = ({ onFileUploaded }) => {
     
     if (!file) return;  
     
-    // 检查文件类型  
-    if (file.type !== 'application/pdf') {  
+    // Check file type  
+    if (!file.name.endsWith('.pdf')) {  
       toast({  
         title: "Invalid file type",  
         description: "Only PDF files are accepted",  
         status: "error",  
-        duration: 5000,  
+        duration: 3000,  
         isClosable: true,  
       });  
       return;  
@@ -38,12 +38,12 @@ const FileUpload = ({ onFileUploaded }) => {
     setUploading(true);  
     setUploadProgress(0);  
     
-    // 创建FormData对象  
+    // Create FormData object  
     const formData = new FormData();  
     formData.append('file', file);  
     
     try {  
-      // 上传文件  
+      // Upload file  
       const response = await axios.post('/api/upload', formData, {  
         headers: {  
           'Content-Type': 'multipart/form-data',  
@@ -57,14 +57,14 @@ const FileUpload = ({ onFileUploaded }) => {
       });  
       
       toast({  
-        title: "File uploaded",  
-        description: response.data.message,  
+        title: "File uploaded successfully",  
+        description: `${file.name} has been uploaded and queued for processing`,  
         status: "success",  
         duration: 5000,  
         isClosable: true,  
       });  
       
-      // 通知父组件  
+      // Notify parent component  
       if (onFileUploaded) {  
         onFileUploaded(response.data);  
       }  

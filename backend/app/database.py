@@ -1,12 +1,12 @@
-"""数据库模块。
+"""Database Module.
 
-该模块提供数据库连接和ORM模型定义，用于管理PDF文档的元数据。
+This module provides database connections and ORM model definitions for managing PDF document metadata.
 """
 
-# 标准库导入
+# Standard library imports
 import datetime
 
-# 第三方库导入
+# Third-party library imports
 from sqlalchemy import (
     Boolean,
     Column,
@@ -19,10 +19,10 @@ from sqlalchemy import (
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
-# 创建基础类
+# Create base class
 Base = declarative_base()
 
-# 创建数据库引擎和会话
+# Create database engine and session
 engine = create_engine(
     "sqlite:///./pdf_knowledge_base.db",
     connect_args={"check_same_thread": False}
@@ -31,7 +31,7 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
 class PDFDocument(Base):
-    """PDF文档数据模型，用于存储文档的元数据和处理状态。"""
+    """PDF document data model, used to store document metadata and processing status."""
     
     __tablename__ = "pdf_documents"
     
@@ -48,15 +48,15 @@ class PDFDocument(Base):
     error = Column(String, nullable=True)
 
 
-# 创建数据库表
+# Create database tables
 Base.metadata.create_all(bind=engine)
 
 
 def get_db():
-    """获取数据库会话。
+    """Get database session.
     
     Yields:
-        Session: 数据库会话对象。
+        Session: Database session object.
     """
     db = SessionLocal()
     try:
