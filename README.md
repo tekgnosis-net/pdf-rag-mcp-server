@@ -1,4 +1,5 @@
 # PDF RAG MCP Server
+<img width="699" alt="image" src="https://github.com/user-attachments/assets/c0f5c882-bec8-4ba0-92e5-ce4607f482f7" />
 
 A powerful document knowledge base system that leverages PDF processing, vector storage, and MCP (Model Context Protocol) to provide semantic search capabilities for PDF documents. This system allows you to upload, process, and query PDF documents through a modern web interface or via the MCP protocol for integration with AI tools like Cursor.
 
