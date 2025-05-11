@@ -61,6 +61,23 @@ The system consists of:
 
 5. Access the web interface at [http://localhost:8000](http://localhost:8000)
 
+6. Using with Cursor 
+
+Go Settings -> Cursor Settings -> MCP -> Add new global MCP server, paste below into your Cursor ~/.cursor/mcp.json file. See Cursor MCP docs for more info.
+```json
+{
+  "mcpServers": {
+    "pdf-rag": {
+      "url": "http://localhost:7800/mcp"
+    }
+  }
+}
+```
+You could also change localhost into the host ip you deployed the service. After this confige added to the mcp json, you will see the mcp server showes at the Cursor mcp config page, switch it on to enable the server:
+
+<img width="742" alt="image" src="https://github.com/user-attachments/assets/d9b2c97c-c535-4d2a-bcf1-2d2c6343aeb3" />
+
+
 ### Building the Frontend (For Developers)
 
 If you need to rebuild the frontend, you have two options:
