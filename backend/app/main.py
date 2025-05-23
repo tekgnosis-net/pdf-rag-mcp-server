@@ -269,12 +269,26 @@ async def delete_document(doc_id: int, db: Session = Depends(get_db)):
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
     
-    # Don't allow deletion if document is being processed
-    if doc.processing:
+    # Check if document is actually being processed
+    is_actually_processing = False
+    if doc.processing and doc.filename in PROCESSING_STATUS:
+        status = PROCESSING_STATUS.get(doc.filename, {}).get("status", "")
+        # If status indicates active processing and not an error state
+        if (status and "Error" not in status and status != "Completed" 
+            and PROCESSING_STATUS[doc.filename].get("progress", 0) < 100):
+            is_actually_processing = True
+    
+    # Only prevent deletion if document is actually being processed
+    if is_actually_processing:
         raise HTTPException(
             status_code=400,
             detail="Cannot delete document while it's being processed"
         )
+    
+    # If document was marked as processing but isn't anymore, clean up status
+    if doc.processing and doc.filename in PROCESSING_STATUS:
+        PROCESSING_STATUS.pop(doc.filename, None)
+        logger.info(f"Cleaned up interrupted processing status for {doc.filename}")
     
     # Delete file
     if os.path.exists(doc.file_path):
@@ -399,6 +413,34 @@ async def query_knowledge_base(query: str):
 
 mcp = FastApiMCP(mcp_app)
 mcp.mount()
+
+# Check for and reset interrupted document processing
+@app.on_event("startup")
+async def reset_interrupted_processing():
+    """Check for documents marked as processing but interrupted, and reset their status."""
+    db = SessionLocal()
+    try:
+        processing_docs = db.query(PDFDocument).filter(PDFDocument.processing == True).all()
+        
+        if processing_docs:
+            logger.info(f"Found {len(processing_docs)} documents with interrupted processing status")
+            
+            for doc in processing_docs:
+                # Mark as not processing, but keep error message if any
+                doc.processing = False
+                if not doc.error:
+                    doc.error = "Processing was interrupted"
+                
+                logger.info(f"Reset interrupted processing status for document: {doc.filename}")
+                
+                # Remove from PROCESSING_STATUS if it exists
+                if doc.filename in PROCESSING_STATUS:
+                    PROCESSING_STATUS.pop(doc.filename)
+            
+            db.commit()
+            logger.info("All interrupted processing statuses have been reset")
+    finally:
+        db.close()
 
 # Start service
 if __name__ == "__main__":
