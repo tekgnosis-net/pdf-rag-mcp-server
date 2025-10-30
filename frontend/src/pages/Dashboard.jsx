@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';  
+import React, { useCallback, useEffect, useState } from 'react';  
 import {   
   Box,   
   Heading,   
@@ -18,11 +18,10 @@ import { useWebSocket } from '../context/WebSocketContext';
 
 const Dashboard = () => {  
   const [documents, setDocuments] = useState([]);  
-  const [loading, setLoading] = useState(true);  
   const { processingStatus, isConnected } = useWebSocket();  
   const toast = useToast();  
 
-  const fetchDocuments = async () => {  
+  const fetchDocuments = useCallback(async () => {  
     try {  
       const response = await axios.get('/api/documents');  
       setDocuments(response.data);  
@@ -35,17 +34,15 @@ const Dashboard = () => {
         duration: 5000,  
         isClosable: true,  
       });  
-    } finally {  
-      setLoading(false);  
     }  
-  };  
+  }, [toast]);  
 
   useEffect(() => {  
     fetchDocuments();  
     // Set up refresh interval  
     const intervalId = setInterval(fetchDocuments, 10000);  
     return () => clearInterval(intervalId);  
-  }, []);  
+  }, [fetchDocuments]);  
 
   // Merge document status with WebSocket status  
   const enhancedDocuments = documents.map(doc => {  
@@ -122,7 +119,7 @@ const Dashboard = () => {
           {isConnected ? "Connected" : "Disconnected"}  
         </Text>  
         <Text fontSize="sm" color="gray.600" mt={2}>  
-          Configure in Cursor: Settings → AI & MCP → Add URL: http://localhost:7800/mcp  
+          Configure in AI/LLM Chat Client: Settings → MCP Servers → Add URL: http://MCP-SERVER-IP:DOCKER_PORT/mcp  
         </Text>  
       </Box>  
     </Box>  

@@ -19,18 +19,7 @@ const Header = () => {
               size="sm"  
             >  
               Home  
-            </Button>  
-            <Button  
-              as="a"  
-              href="https://cursor.sh"  
-              target="_blank"   
-              variant="ghost"  
-              colorScheme="whiteAlpha"  
-              leftIcon={<FiBook />}  
-              size="sm"  
-            >  
-              Cursor Docs  
-            </Button>  
+            </Button>   
           </HStack>  
         </Flex>  
         
