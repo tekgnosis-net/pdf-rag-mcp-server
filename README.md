@@ -49,8 +49,8 @@ To enable auto-ingestion in Docker, mount a host folder to the watch directory (
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/yourusername/PdfRagMcpServer.git
-   cd PdfRagMcpServer
+   git clone https://github.com/tekgnosis-net/pdf-rag-mcp-server.git
+   cd pdf-rag-mcp-server
    ```
 
 2. Install uv if you don't have it already:
@@ -258,7 +258,7 @@ To build a bespoke image (for example, to change the embedded user/group IDs), c
 ## Project Structure
 
 ```
-PdfRagMcpServer/
+pdf-rag-mcp-server/
 ├── backend/               # FastAPI backend
 │   ├── app/
 │   │   ├── __init__.py
