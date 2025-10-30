@@ -25,6 +25,7 @@ RUN apt-get update \
          gosu \
          libglib2.0-0 \
          libgl1 \
+         tesseract-ocr \
      && rm -rf /var/lib/apt/lists/*
 
 # Install uv for dependency management (matches project docs)

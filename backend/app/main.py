@@ -290,7 +290,10 @@ async def get_documents(db: Session = Depends(get_db)):
             "page_count": doc.page_count,
             "chunks_count": doc.chunks_count,
             "progress": doc.progress,
-            "error": doc.error
+            "error": doc.error,
+            "blacklisted": doc.blacklisted,
+            "blacklisted_at": doc.blacklisted_at,
+            "blacklist_reason": doc.blacklist_reason,
         }
         for doc in docs
     ]
@@ -325,6 +328,9 @@ async def get_document(doc_id: int, db: Session = Depends(get_db)):
         "chunks_count": doc.chunks_count,
         "progress": doc.progress,
         "error": doc.error,
+        "blacklisted": doc.blacklisted,
+        "blacklisted_at": doc.blacklisted_at,
+        "blacklist_reason": doc.blacklist_reason,
         "status": PROCESSING_STATUS.get(
             doc.filename,
             {"progress": doc.progress, "status": "Unknown"}

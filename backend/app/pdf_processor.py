@@ -5,6 +5,8 @@ This module is responsible for parsing PDF documents, extracting text content, a
 
 # Standard library imports
 import asyncio
+import datetime as dt
+import io
 import logging
 import os
 import time
@@ -14,8 +16,10 @@ from typing import Dict, List, Optional
 
 # Third-party library imports
 import fitz  # PyMuPDF
+import pytesseract
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from sentence_transformers import SentenceTransformer
+from PIL import Image
 
 # Local application/library imports
 from app.database import PDFDocument, SessionLocal
@@ -148,14 +152,73 @@ class PDFProcessor:
             logger.info(f"PDF parsing completed, starting to split into chunks")
             joined_text = "\n".join(all_texts)
             
-            # Check if there is valid text
+            # Check if there is valid text and attempt OCR fallback if needed
             if not joined_text.strip():
-                error_msg = "No valid text content after PDF parsing"
-                logger.error(error_msg)
-                pdf_doc.error = error_msg
-                pdf_doc.processing = False
+                logger.warning("No text extracted via built-in parser for %s; attempting OCR fallback", filename)
+                PROCESSING_STATUS[filename] = {
+                    "progress": pdf_doc.progress,
+                    "status": "Running OCR",
+                    "page_current": 0,
+                }
                 db.commit()
-                return False
+
+                ocr_texts: List[str] = []
+                ocr_pages: List[int] = []
+                matrix = fitz.Matrix(2, 2)
+
+                for page_index in range(len(doc)):
+                    try:
+                        page = doc.load_page(page_index)
+                        pix = page.get_pixmap(matrix=matrix)
+                        image_bytes = io.BytesIO(pix.tobytes("png"))
+                        with Image.open(image_bytes) as pil_image:
+                            ocr_text = pytesseract.image_to_string(pil_image)
+                    except Exception as ocr_error:  # noqa: BLE001
+                        logger.error(
+                            "OCR extraction failed for page %s of %s: %s",
+                            page_index + 1,
+                            filename,
+                            ocr_error,
+                        )
+                        continue
+
+                    if ocr_text.strip():
+                        ocr_texts.append(ocr_text)
+                        ocr_pages.append(page_index + 1)
+
+                    progress = 50 + ((page_index + 1) / max(len(doc), 1) * 20)
+                    pdf_doc.progress = min(progress, 70)
+                    PROCESSING_STATUS[filename] = {
+                        "progress": pdf_doc.progress,
+                        "status": "Running OCR",
+                        "page_current": page_index + 1,
+                    }
+                    db.commit()
+                    await asyncio.sleep(0.05)
+
+                if ocr_texts:
+                    all_texts = ocr_texts
+                    page_numbers = ocr_pages
+                    joined_text = "\n".join(all_texts)
+                    logger.info(
+                        "OCR fallback recovered text for %s (pages with content: %s)",
+                        filename,
+                        len(ocr_texts),
+                    )
+                else:
+                    error_msg = "No valid text content after PDF parsing or OCR fallback"
+                    logger.error(error_msg)
+                    pdf_doc.error = error_msg
+                    pdf_doc.blacklisted = True
+                    pdf_doc.blacklisted_at = dt.datetime.utcnow()
+                    pdf_doc.blacklist_reason = error_msg
+                    pdf_doc.processing = False
+                    PROCESSING_STATUS[filename] = {
+                        "progress": pdf_doc.progress,
+                        "status": "Blacklisted",
+                    }
+                    db.commit()
+                    return False
                 
             chunks = self.text_splitter.split_text(joined_text)
             pdf_doc.chunks_count = len(chunks)

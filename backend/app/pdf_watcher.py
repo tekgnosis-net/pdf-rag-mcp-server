@@ -124,15 +124,37 @@ class PDFDirectoryWatcher:
                         logger.debug("Skipping %s – already processing", display_name)
                         return
 
+                    file_changed = (
+                        (existing.uploaded_at and existing.uploaded_at < mtime)
+                        or existing.file_size != file_size
+                    )
+
+                    if existing.blacklisted and not file_changed:
+                        logger.info(
+                            "Skipping %s – previously blacklisted (%s)",
+                            display_name,
+                            existing.blacklist_reason or "no reason recorded",
+                        )
+                        PROCESSING_STATUS[existing.filename] = {
+                            "progress": existing.progress,
+                            "status": "Blacklisted",
+                        }
+                        return
+
                     needs_reprocess = (
                         not existing.processed
-                        or (existing.uploaded_at and existing.uploaded_at < mtime)
-                        or existing.file_size != file_size
+                        or file_changed
                     )
 
                     if not needs_reprocess:
                         logger.debug("Skipping %s – already processed and unchanged", display_name)
                         return
+
+                    if existing.blacklisted and file_changed:
+                        logger.info("Clearing blacklist for updated PDF %s", display_name)
+                        existing.blacklisted = False
+                        existing.blacklisted_at = None
+                        existing.blacklist_reason = None
 
                     logger.info("Detected updated PDF %s, scheduling reprocessing", display_name)
                     vector_cleanup_filter = {"pdf_id": existing.id}

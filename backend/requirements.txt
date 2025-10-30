@@ -9,3 +9,5 @@ chromadb
 python-multipart
 aiofiles
 fastapi-mcp
+pytesseract
+Pillow

@@ -17,6 +17,7 @@ from sqlalchemy import (
     String,
     create_engine,
     event,
+    text,
 )
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
@@ -78,10 +79,33 @@ class PDFDocument(Base):
     chunks_count = Column(Integer, default=0)
     progress = Column(Float, default=0.0)  # 0 to 100
     error = Column(String, nullable=True)
+    blacklisted = Column(Boolean, default=False)
+    blacklisted_at = Column(DateTime, nullable=True)
+    blacklist_reason = Column(String, nullable=True)
 
 
 # Create database tables
 Base.metadata.create_all(bind=engine)
+
+
+def _ensure_schema():
+    """Ensure optional columns exist for legacy databases without migrations."""
+    if not engine_url.startswith("sqlite"):
+        return
+
+    with engine.begin() as connection:
+        pragma_result = connection.execute(text("PRAGMA table_info(pdf_documents)"))
+        existing_columns = {row[1] for row in pragma_result}
+
+        if "blacklisted" not in existing_columns:
+            connection.execute(text("ALTER TABLE pdf_documents ADD COLUMN blacklisted BOOLEAN DEFAULT 0"))
+        if "blacklisted_at" not in existing_columns:
+            connection.execute(text("ALTER TABLE pdf_documents ADD COLUMN blacklisted_at DATETIME"))
+        if "blacklist_reason" not in existing_columns:
+            connection.execute(text("ALTER TABLE pdf_documents ADD COLUMN blacklist_reason TEXT"))
+
+
+_ensure_schema()
 
 
 def get_db():
