@@ -22,6 +22,7 @@ RUN apt-get update \
      && apt-get install -y --no-install-recommends \
          build-essential \
          curl \
+         gosu \
          libglib2.0-0 \
          libgl1 \
      && rm -rf /var/lib/apt/lists/*
@@ -36,6 +37,8 @@ RUN uv pip install --system --no-cache -r backend/requirements.txt
 # Copy backend sources and supporting scripts
 COPY backend/ ./backend/
 COPY run.py ./
+COPY entrypoint.sh ./entrypoint.sh
+RUN chmod +x ./entrypoint.sh
 
 # Bring built frontend assets into the backend static directory
 COPY --from=frontend-builder /app/frontend/dist/ ./backend/app/static/
@@ -54,6 +57,7 @@ ARG PGID=1000
 RUN groupadd -g ${PGID} appgroup && useradd -u ${PUID} -g appgroup -m appuser \
     && mkdir -p /home/appuser/.cache/torch/sentence_transformers \
     && chown -R appuser:appgroup backend /home/appuser/.cache
-USER appuser
+USER root
 
-ENTRYPOINT ["uv", "run", "run.py"]
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["uv", "run", "run.py"]
