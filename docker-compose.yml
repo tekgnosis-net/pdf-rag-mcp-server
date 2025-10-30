@@ -1,0 +1,26 @@
+services:
+  pdf-rag:
+    image: ${PDF_RAG_IMAGE:-ghcr.io/tekgnosis-net/pdf-rag-mcp-server:latest}
+    container_name: pdf-rag-server
+    env_file:
+      - .env
+    environment:
+      SENTENCE_TRANSFORMERS_HOME: "${SENTENCE_TRANSFORMERS_CACHE:-/home/appuser/.cache/torch/sentence_transformers}"
+    ports:
+      - "${APP_PORT:-8000}:8000"
+      - "${MCP_PORT:-7800}:7800"
+    volumes:
+      - ${PDF_RAG_UPLOADS:-./data/uploads}:/app/backend/uploads
+      - ${PDF_RAG_CHROMA_DB:-./data/chroma_db}:/app/backend/chroma_db
+      - ${PDF_RAG_MODEL_CACHE:-./data/model_cache}:/home/appuser/.cache/torch/sentence_transformers
+      - ${PDF_RAG_WATCH_VOLUME:-./data/auto_ingest}:${PDF_RAG_WATCH_DIR:-/app/auto_ingest}
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '4.0'
+          memory: 12G
+        reservations:
+          cpus: '1.0'
+          memory: 2G
+    gpus: all
