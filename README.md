@@ -1,6 +1,23 @@
-<hr style="height:4px; background-color:#333; border:none;" />
+<div style="border:2px solid #2d3748; border-radius:12px; background:#1a202c; color:#e2e8f0; padding:20px; margin-bottom:32px;">
 
-> **With gratitude:** This project proudly stands on the shoulders of the original work by [hyson666/pdf-rag-mcp-server](https://github.com/hyson666/pdf-rag-mcp-server). Huge thanks to Hyson and the community for open-sourcing a rock-solid starting point and inspiring the continued evolution of this PDF RAG stack.
+> ### ❤️ With Gratitude
+>
+> **This project proudly stands on the shoulders of the original work by [hyson666/pdf-rag-mcp-server](https://github.com/hyson666/pdf-rag-mcp-server).**
+>
+> Huge thanks to Hyson and the community for open-sourcing a rock-solid starting point and inspiring the continued evolution of this PDF RAG stack.
+>
+> I've built upon that foundation to enhance functionality, improve usability, and integrate modern practices so the project continues to serve the community effectively.
+>
+> **Highlights of the enhancements include:**
+>
+> - A more robust Docker setup for reproducible deployments
+> - Enhanced WebSocket handling for reliable real-time updates
+> - Automatic directory ingestion for seamless document management
+> - Updated dependency management with uv for faster installs and better reproducibility
+>
+> These improvements make it easier to start with large collections of PDF specification documents while keeping the codebase maintainable and production-friendly.
+
+</div>
 
 # PDF RAG MCP Server
 <img width="600" alt="image" src="https://github.com/user-attachments/assets/3aeb102a-6d7f-4d58-a15b-129e640b2e35" />
