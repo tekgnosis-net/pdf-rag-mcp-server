@@ -1,3 +1,7 @@
+<hr style="height:4px; background-color:#333; border:none;" />
+
+> **With gratitude:** This project proudly stands on the shoulders of the original work by [hyson666/pdf-rag-mcp-server](https://github.com/hyson666/pdf-rag-mcp-server). Huge thanks to Hyson and the community for open-sourcing a rock-solid starting point and inspiring the continued evolution of this PDF RAG stack.
+
 # PDF RAG MCP Server
 <img width="600" alt="image" src="https://github.com/user-attachments/assets/3aeb102a-6d7f-4d58-a15b-129e640b2e35" />
 
