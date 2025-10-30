@@ -59,5 +59,5 @@ RUN groupadd -g ${PGID} appgroup && useradd -u ${PUID} -g appgroup -m appuser \
     && chown -R appuser:appgroup backend /home/appuser/.cache
 USER root
 
-ENTRYPOINT ["/entrypoint.sh"]
+ENTRYPOINT ["/app/entrypoint.sh"]
 CMD ["uv", "run", "run.py"]
