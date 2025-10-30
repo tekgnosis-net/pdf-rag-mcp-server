@@ -13,6 +13,7 @@ A powerful document knowledge base system that leverages PDF processing, vector 
 - **MCP Protocol Support**: Integrate with AI tools like Cursor using the Model Context Protocol
 - **Modern Web Interface**: React/Chakra UI frontend for document management and querying
 - **Fast Dependency Management**: Uses uv for efficient Python dependency management
+- **Automatic Directory Ingestion**: Watches a mounted folder and processes new or updated PDFs without manual uploads
 
 ## System Architecture
 
@@ -23,6 +24,17 @@ The system consists of:
 - **Vector Database**: Stores embeddings for semantic search
 - **WebSocket Server**: Provides real-time updates on document processing
 - **MCP Server**: Exposes knowledge base to MCP-compatible clients
+- **PDF Directory Watcher**: Monitors a configurable filesystem path and schedules ingestion jobs for new PDFs
+
+## Automatic PDF Ingestion
+
+The backend ships with a directory watcher (`backend/app/pdf_watcher.py`) that continuously scans the path defined by `PDF_RAG_WATCH_DIR`. Any new or modified PDFs found there are inserted into the database and processed just like uploaded files. The watcher:
+
+- Debounces processing by comparing filesystem modification times against the database
+- Clears existing embeddings for a document before reprocessing to avoid stale chunks
+- Uses a thread pool sized by `PDF_RAG_WATCH_MAX_WORKERS` so large drops are handled concurrently without overwhelming the processor
+
+To enable auto-ingestion in Docker, mount a host folder to the watch directory (see the Docker Deployment section) and copy PDFs into that folder. Status events for watched files flow through the same WebSocket channel as manual uploads, so the dashboard reflects progress automatically.
 
 ## Quick Start
 
@@ -168,6 +180,45 @@ If you want to run the services separately for development:
    npm run dev
    ```
 
+## Docker Deployment
+
+The project publishes a container image to the GitHub Container Registry (GHCR) at `ghcr.io/tekgnosis-net/pdf-rag-mcp-server`. Using Docker Compose keeps the backend, vector store, uploads, and watcher volumes wired together with sensible defaults.
+
+### Environment Configuration
+
+Create a `.env` file (you can copy `.env.sample`) to tune ports, volume paths, and watcher behaviour:
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `APP_PORT` | `8000` | Host port exposed for the FastAPI and WebSocket server |
+| `MCP_PORT` | `7800` | Host port for the MCP endpoint |
+| `PDF_RAG_IMAGE` | `ghcr.io/tekgnosis-net/pdf-rag-mcp-server:latest` | Image reference pulled by Docker Compose |
+| `PDF_RAG_UPLOADS` | `./data/uploads` | Host path for persisted uploaded PDFs |
+| `PDF_RAG_CHROMA_DB` | `./data/chroma_db` | Host path for the Chroma vector database |
+| `PDF_RAG_MODEL_CACHE` | `./data/model_cache` | Host path for the sentence-transformers model cache |
+| `PDF_RAG_WATCH_DIR` | `/app/auto_ingest` | Path inside the container monitored by the watcher |
+| `PDF_RAG_WATCH_VOLUME` | `./data/auto_ingest` | Host path mounted into the watcher directory |
+| `PDF_RAG_WATCH_INTERVAL` | `5` | Poll interval (seconds) between directory scans |
+| `PDF_RAG_WATCH_MAX_WORKERS` | `1` | Maximum concurrent processing tasks spawned by the watcher |
+| `SENTENCE_TRANSFORMERS_DEVICE` | `cpu` | Set to `cuda` to use GPU embeddings when available |
+| `SENTENCE_TRANSFORMERS_CACHE` | `/home/appuser/.cache/torch/sentence_transformers` | Override the cache location inside the container |
+
+### Running with Docker Compose
+
+```bash
+cp .env.sample .env   # customise as needed
+docker compose pull   # fetch latest GHCR image
+docker compose up -d  # start the stack
+```
+
+After the stack boots:
+
+- Upload PDFs through the web UI or drop them into the folder pointed to by `PDF_RAG_WATCH_VOLUME`
+- Connect MCP clients to `http://<host>:${MCP_PORT}/mcp/v1`
+- Persisted data lives in the `./data` folder (or the paths you configured)
+
+To build a bespoke image (for example, to change the embedded user/group IDs), clone the repo and run `docker build` with the `PUID` and `PGID` build args. You can then point `PDF_RAG_IMAGE` at your custom tag.
+
 ## Usage
 
 ### Uploading Documents
@@ -214,6 +265,7 @@ PdfRagMcpServer/
 │   │   ├── main.py        # Main FastAPI application
 │   │   ├── database.py    # Database models
 │   │   ├── pdf_processor.py # PDF processing logic
+│   │   ├── pdf_watcher.py # Directory watcher for auto-ingestion
 │   │   ├── vector_store.py # Vector database interface
 │   │   └── websocket.py   # WebSocket handling
 │   ├── static/            # Static files for the web interface
