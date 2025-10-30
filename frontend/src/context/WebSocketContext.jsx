@@ -15,7 +15,9 @@ export const WebSocketProvider = ({ children }) => {
     let ws;
     let reconnectTimer;
     const connect = () => {
-      ws = new window.WebSocket(`ws://${window.location.hostname}:8000/ws`);
+      const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+      const portSegment = window.location.port ? `:${window.location.port}` : '';
+  ws = new window.WebSocket(`${protocol}://${window.location.hostname}${portSegment}/ws`);
       setSocket(ws);
       ws.onopen = () => {  
         setIsConnected(true);  
