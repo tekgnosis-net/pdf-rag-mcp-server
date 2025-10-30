@@ -210,4 +210,3 @@ class PDFDirectoryWatcher:
     def _remove_active_path(self, path: str) -> None:
         with self._active_lock:
             self._active_paths.discard(path)
-#*** End Patch

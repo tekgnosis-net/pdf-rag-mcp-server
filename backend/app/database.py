@@ -5,6 +5,7 @@ This module provides database connections and ORM model definitions for managing
 
 # Standard library imports
 import datetime
+import os
 
 # Third-party library imports
 from sqlalchemy import (
@@ -23,10 +24,26 @@ from sqlalchemy.orm import sessionmaker
 # Create base class
 Base = declarative_base()
 
+# Database configuration sourced from environment for container persistence
+_db_url = os.getenv("PDF_RAG_DB_URL")
+_db_path = os.getenv("PDF_RAG_DB_PATH", "./pdf_knowledge_base.db")
+
+if _db_url:
+    engine_url = _db_url
+else:
+    if _db_path.startswith("sqlite://"):
+        engine_url = _db_path
+    else:
+        if os.path.dirname(_db_path):
+            os.makedirs(os.path.dirname(_db_path), exist_ok=True)
+        engine_url = f"sqlite:///{_db_path}"
+
+connect_args = {"check_same_thread": False, "timeout": 30} if engine_url.startswith("sqlite") else {}
+
 # Create database engine and session
 engine = create_engine(
-    "sqlite:///./pdf_knowledge_base.db",
-    connect_args={"check_same_thread": False, "timeout": 30}
+    engine_url,
+    connect_args=connect_args
 )
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
@@ -34,6 +51,9 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 @event.listens_for(engine, "connect")
 def set_sqlite_pragma(dbapi_connection, connection_record):  # noqa: D401
     """Ensure SQLite uses WAL mode to reduce write contention."""
+    if not engine_url.startswith("sqlite"):
+        return
+
     cursor = dbapi_connection.cursor()
     try:
         cursor.execute("PRAGMA journal_mode=WAL;")
