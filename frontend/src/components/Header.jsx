@@ -36,7 +36,7 @@ const Header = () => {
         
         <Button  
           as="a"  
-          href="https://github.com/hyson666/pdf-rag-mcp-server"  
+          href="https://github.com/tekgnosis-net/pdf-rag-mcp-server"  
           target="_blank"   
           leftIcon={<FiGithub />}  
           variant="outline"  

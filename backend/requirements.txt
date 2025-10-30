@@ -3,8 +3,9 @@ uvicorn
 sqlalchemy
 pydantic
 PyMuPDF
-langchain
+langchain==0.0.353
 sentence-transformers
 chromadb
 python-multipart
 aiofiles
+fastapi-mcp

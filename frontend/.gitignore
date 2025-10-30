@@ -22,3 +22,8 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Docker related local files
+.env
+docker-compose.override.yml
+docker-compose.yml

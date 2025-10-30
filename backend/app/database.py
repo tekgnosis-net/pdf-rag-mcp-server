@@ -15,6 +15,7 @@ from sqlalchemy import (
     Integer,
     String,
     create_engine,
+    event,
 )
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
@@ -25,9 +26,20 @@ Base = declarative_base()
 # Create database engine and session
 engine = create_engine(
     "sqlite:///./pdf_knowledge_base.db",
-    connect_args={"check_same_thread": False}
+    connect_args={"check_same_thread": False, "timeout": 30}
 )
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+
+@event.listens_for(engine, "connect")
+def set_sqlite_pragma(dbapi_connection, connection_record):  # noqa: D401
+    """Ensure SQLite uses WAL mode to reduce write contention."""
+    cursor = dbapi_connection.cursor()
+    try:
+        cursor.execute("PRAGMA journal_mode=WAL;")
+        cursor.execute("PRAGMA synchronous=NORMAL;")
+    finally:
+        cursor.close()
 
 
 class PDFDocument(Base):

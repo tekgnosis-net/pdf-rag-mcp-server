@@ -8,6 +8,7 @@ import asyncio
 import logging
 import os
 import uuid
+from contextlib import asynccontextmanager
 
 # Third-party library imports
 from fastapi import (
@@ -29,21 +30,101 @@ from sqlalchemy.orm import Session
 # Local application/library imports
 from app.database import PDFDocument, SessionLocal, get_db
 from app.pdf_processor import PDFProcessor, PROCESSING_STATUS
+from app.pdf_watcher import PDFDirectoryWatcher
 from app.vector_store import VectorStore
 from app.websocket import manager
 
-# Initialize application
-app = FastAPI(title="MCP PDF Knowledge Base")
-mcp_app = FastAPI(title="MCP PDF Knowledge MCP Server")
+# Global directory watcher placeholder to satisfy type checkers
+directory_watcher: PDFDirectoryWatcher | None = None
 
-# Initialize processor and model
-pdf_processor = PDFProcessor()
-embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
-vector_store = VectorStore()
+
+@asynccontextmanager
+async def app_lifespan(_: FastAPI):
+    """Coordinate startup/shutdown tasks without deprecated on_event hooks."""
+    await reset_interrupted_processing()
+    try:
+        yield
+    finally:
+        await stop_directory_watcher()
+
+
+# Initialize application
+app = FastAPI(title="MCP PDF Knowledge Base", lifespan=app_lifespan)
+mcp_app = FastAPI(title="MCP PDF Knowledge MCP Server")
 
 # Configure logging
 logger = logging.getLogger("main")
-logger.info(f"Initializing application, vector database document count: {vector_store.get_document_count()}")
+
+
+def _load_embedding_model():
+    """Load SentenceTransformer embedding model honoring device preference."""
+    requested_device = os.getenv("SENTENCE_TRANSFORMERS_DEVICE", "cpu")
+    logger.info(
+        "Loading SentenceTransformer for query handler on device '%s'",
+        requested_device
+    )
+    try:
+        return SentenceTransformer(
+            "all-MiniLM-L6-v2",
+            device=requested_device
+        )
+    except Exception as exc:
+        if requested_device.lower() != "cpu":
+            logger.warning(
+                "Failed to initialize SentenceTransformer on device '%s': %s. "
+                "Falling back to CPU.",
+                requested_device,
+                exc
+            )
+            return SentenceTransformer("all-MiniLM-L6-v2", device="cpu")
+        raise
+
+
+# Initialize processor and model
+pdf_processor = PDFProcessor()
+embedding_model = _load_embedding_model()
+vector_store = VectorStore()
+
+watch_directory = os.getenv("PDF_RAG_WATCH_DIR")
+if watch_directory:
+    interval_raw = os.getenv("PDF_RAG_WATCH_INTERVAL", "5")
+    try:
+        poll_interval = float(interval_raw)
+    except ValueError:
+        logger.warning(
+            "Invalid PDF_RAG_WATCH_INTERVAL value '%s', defaulting to 5 seconds",
+            interval_raw,
+        )
+        poll_interval = 5.0
+
+    max_workers_raw = os.getenv("PDF_RAG_WATCH_MAX_WORKERS", "1")
+    try:
+        max_workers = max(1, int(max_workers_raw))
+    except ValueError:
+        logger.warning(
+            "Invalid PDF_RAG_WATCH_MAX_WORKERS value '%s', defaulting to 1",
+            max_workers_raw,
+        )
+        max_workers = 1
+
+    directory_watcher = PDFDirectoryWatcher(
+        watch_directory,
+        pdf_processor,
+        vector_store,
+        poll_interval=poll_interval,
+        max_workers=max_workers,
+    )
+    logger.info(
+        "Auto-ingest watcher configured for %s (interval %.1fs, max_workers %d)",
+        watch_directory,
+        poll_interval,
+        max_workers,
+    )
+
+logger.info(
+    "Initializing application, vector database document count: %s",
+    vector_store.get_document_count()
+)
 
 # Configure CORS
 app.add_middleware(
@@ -415,7 +496,6 @@ mcp = FastApiMCP(mcp_app)
 mcp.mount()
 
 # Check for and reset interrupted document processing
-@app.on_event("startup")
 async def reset_interrupted_processing():
     """Check for documents marked as processing but interrupted, and reset their status."""
     db = SessionLocal()
@@ -441,6 +521,15 @@ async def reset_interrupted_processing():
             logger.info("All interrupted processing statuses have been reset")
     finally:
         db.close()
+
+    if directory_watcher:
+        directory_watcher.start()
+
+
+async def stop_directory_watcher():
+    """Stop the directory watcher thread when the application shuts down."""
+    if directory_watcher:
+        directory_watcher.stop()
 
 # Start service
 if __name__ == "__main__":

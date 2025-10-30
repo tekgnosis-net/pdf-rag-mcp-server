@@ -42,7 +42,28 @@ class PDFProcessor:
             chunk_overlap=200,
             length_function=len,
         )
-        self.embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+
+        requested_device = os.getenv("SENTENCE_TRANSFORMERS_DEVICE", "cpu")
+        logger.info(f"Loading SentenceTransformer on device '{requested_device}'")
+        try:
+            self.embedding_model = SentenceTransformer(
+                "all-MiniLM-L6-v2",
+                device=requested_device
+            )
+        except Exception as exc:
+            if requested_device.lower() != "cpu":
+                logger.warning(
+                    "Failed to load SentenceTransformer on device '%s': %s. "
+                    "Falling back to CPU.",
+                    requested_device,
+                    exc
+                )
+                self.embedding_model = SentenceTransformer(
+                    "all-MiniLM-L6-v2",
+                    device="cpu"
+                )
+            else:
+                raise
         self.vector_store = VectorStore()
         
     async def process_pdf(self, pdf_id: int, pdf_path: str, filename: str):
