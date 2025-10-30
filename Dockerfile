@@ -28,7 +28,8 @@ RUN apt-get update \
      && rm -rf /var/lib/apt/lists/*
 
 # Install uv for dependency management (matches project docs)
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
+    && cp /root/.local/bin/uv /usr/local/bin/uv
 ENV PATH="/root/.local/bin:${PATH}"
 
 COPY backend/requirements.txt ./backend/requirements.txt

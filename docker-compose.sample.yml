@@ -1,6 +1,9 @@
 services:
   pdf-rag:
     image: ${PDF_RAG_IMAGE:-ghcr.io/tekgnosis-net/pdf-rag-mcp-server:latest}
+    build:
+      context: ${PDF_RAG_BUILD_CONTEXT:-.}
+      dockerfile: ${PDF_RAG_DOCKERFILE:-Dockerfile}
     container_name: pdf-rag-server
     env_file:
       - .env
