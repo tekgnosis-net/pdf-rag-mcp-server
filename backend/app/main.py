@@ -505,21 +505,13 @@ async def query_knowledge_base(query: str):
     }
 
 
-@mcp_app.get("/documents/markdown")
-async def get_document_markdown(
+def _render_document_markdown(
     title: str,
     start_page: int = 1,
     max_pages: int | None = None,
     max_characters: int | None = None,
 ):
-    """Return PDF content rendered as Markdown with optional paging limits.
-
-    Args:
-        title: Document title or filename fragment to match.
-        start_page: 1-indexed page to begin rendering from.
-        max_pages: Maximum number of pages to include starting at ``start_page``.
-        max_characters: Optional character budget for the rendered page content.
-    """
+    """Render PDF content as Markdown enforcing pagination and character budgets."""
     if not title or not title.strip():
         raise HTTPException(status_code=400, detail="Title query must be provided")
 
@@ -539,7 +531,7 @@ async def get_document_markdown(
         if not documents:
             raise HTTPException(status_code=404, detail="No documents available")
 
-        scored_docs = []
+        scored_docs: list[tuple[float, PDFDocument]] = []
         for document in documents:
             filename_lower = document.filename.lower()
             if query_normalized in filename_lower:
@@ -601,7 +593,7 @@ async def get_document_markdown(
                         logger.error(
                             "Text extraction failed while rendering markdown for %s page %s: %s",
                             matched_doc.filename,
-                            index,
+                            page_number,
                             exc,
                         )
 
@@ -615,7 +607,7 @@ async def get_document_markdown(
                             logger.error(
                                 "OCR extraction failed while rendering markdown for %s page %s: %s",
                                 matched_doc.filename,
-                                index,
+                                page_number,
                                 exc,
                             )
 
@@ -676,6 +668,38 @@ async def get_document_markdown(
         }
     finally:
         db.close()
+
+
+@mcp_app.get("/documents/markdown")
+async def get_document_markdown(
+    title: str,
+    start_page: int = 1,
+    max_pages: int | None = None,
+    max_characters: int | None = None,
+):
+    """Return PDF content rendered as Markdown with optional paging limits."""
+    return _render_document_markdown(
+        title=title,
+        start_page=start_page,
+        max_pages=max_pages,
+        max_characters=max_characters,
+    )
+
+
+@app.get("/mcp/documents/markdown")
+async def get_document_markdown_http(
+    title: str,
+    start_page: int = 1,
+    max_pages: int | None = None,
+    max_characters: int | None = None,
+):
+    """Expose the MCP markdown renderer on the primary HTTP application."""
+    return _render_document_markdown(
+        title=title,
+        start_page=start_page,
+        max_pages=max_pages,
+        max_characters=max_characters,
+    )
 
 
 mcp = FastApiMCP(mcp_app)
