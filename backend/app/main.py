@@ -5,12 +5,16 @@ This module provides API endpoints for the PDF Knowledge Base service, supportin
 
 # Standard library imports
 import asyncio
+import io
 import logging
 import os
 import uuid
+from difflib import SequenceMatcher
 from contextlib import asynccontextmanager
 
 # Third-party library imports
+import fitz  # PyMuPDF
+import pytesseract
 from fastapi import (
     BackgroundTasks,
     Depends,
@@ -24,6 +28,7 @@ from fastapi import (
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi_mcp import FastApiMCP
+from PIL import Image
 from sentence_transformers import SentenceTransformer
 from sqlalchemy.orm import Session
 
@@ -496,6 +501,83 @@ async def query_knowledge_base(query: str):
         "query": query,
         "results": formatted_results
     }
+
+
+@mcp_app.get("/documents/markdown")
+async def get_document_markdown(title: str):
+    """Return the full PDF content rendered as Markdown for MCP clients."""
+    if not title or not title.strip():
+        raise HTTPException(status_code=400, detail="Title query must be provided")
+
+    query_normalized = title.strip().lower()
+    db = SessionLocal()
+
+    try:
+        documents = db.query(PDFDocument).all()
+        if not documents:
+            raise HTTPException(status_code=404, detail="No documents available")
+
+        scored_docs = []
+        for document in documents:
+            filename_lower = document.filename.lower()
+            if query_normalized in filename_lower:
+                score = 2.0
+            else:
+                score = SequenceMatcher(None, filename_lower, query_normalized).ratio()
+            scored_docs.append((score, document))
+
+        top_score, matched_doc = max(scored_docs, key=lambda item: item[0])
+        if top_score < 0.3:
+            raise HTTPException(status_code=404, detail="No matching document found")
+
+        if matched_doc.blacklisted:
+            raise HTTPException(status_code=409, detail="Document is currently blacklisted")
+        if not matched_doc.processed:
+            raise HTTPException(status_code=409, detail="Document has not completed processing")
+
+        if not os.path.exists(matched_doc.file_path):
+            raise HTTPException(status_code=404, detail="Document file is missing from storage")
+
+        doc_handle = fitz.open(matched_doc.file_path)
+        try:
+            markdown_sections = [f"# {matched_doc.filename}\n"]
+            matrix = fitz.Matrix(2, 2)
+
+            for index, page in enumerate(doc_handle, start=1):
+                page_markdown = page.get_text("markdown").strip()
+
+                if not page_markdown:
+                    page_text = page.get_text().strip()
+
+                    if not page_text:
+                        try:
+                            pix = page.get_pixmap(matrix=matrix)
+                            image_bytes = io.BytesIO(pix.tobytes("png"))
+                            with Image.open(image_bytes) as image:
+                                page_text = pytesseract.image_to_string(image)
+                        except Exception as exc:  # noqa: BLE001
+                            logger.error(
+                                "OCR extraction failed while rendering markdown for %s page %s: %s",
+                                matched_doc.filename,
+                                index,
+                                exc,
+                            )
+
+                    page_markdown = page_text
+
+                section_content = page_markdown.strip() if page_markdown else "_No extractable content_"
+                markdown_sections.append(f"## Page {index}\n\n{section_content}\n")
+
+        finally:
+            doc_handle.close()
+
+        return {
+            "id": matched_doc.id,
+            "filename": matched_doc.filename,
+            "markdown": "\n".join(markdown_sections),
+        }
+    finally:
+        db.close()
 
 
 mcp = FastApiMCP(mcp_app)
