@@ -20,30 +20,32 @@ WORKDIR /app
 # System dependencies required for PyMuPDF, sentence-transformers, and friends
 RUN apt-get update \
      && apt-get install -y --no-install-recommends \
-         build-essential \
          curl \
          gosu \
          libglib2.0-0 \
          libgl1 \
          tesseract-ocr \
+    && curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin sh \
+     && apt-get purge -y --auto-remove curl \
      && rm -rf /var/lib/apt/lists/*
-
-# Install uv for dependency management (matches project docs)
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
-    && cp /root/.local/bin/uv /usr/local/bin/uv
-ENV PATH="/root/.local/bin:${PATH}"
 
 COPY backend/requirements.txt ./backend/requirements.txt
 RUN uv pip install --system --no-cache -r backend/requirements.txt
 
 # Copy backend sources and supporting scripts
-COPY backend/ ./backend/
+COPY backend/app ./backend/app
 COPY run.py ./
 COPY entrypoint.sh ./entrypoint.sh
 RUN chmod +x ./entrypoint.sh
 
+# Remove any pre-bundled static assets before copying the fresh build
+RUN rm -rf backend/app/static/*
+
 # Bring built frontend assets into the backend static directory
 COPY --from=frontend-builder /app/frontend/dist/ ./backend/app/static/
+
+# Drop any stray development artifacts and bytecode
+RUN find /usr/local /app/backend -type d -name "__pycache__" -prune -exec rm -rf '{}' +
 
 # Ensure expected data directories exist
 RUN mkdir -p backend/uploads backend/chroma_db \
