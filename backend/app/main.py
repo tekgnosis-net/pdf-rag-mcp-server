@@ -41,6 +41,8 @@ from app.websocket import manager
 
 # Global directory watcher placeholder to satisfy type checkers
 directory_watcher: PDFDirectoryWatcher | None = None
+# Track whether the current PyMuPDF build can emit markdown output
+MARKDOWN_OUTPUT_SUPPORTED = True
 
 
 @asynccontextmanager
@@ -510,6 +512,7 @@ async def get_document_markdown(title: str):
         raise HTTPException(status_code=400, detail="Title query must be provided")
 
     query_normalized = title.strip().lower()
+    global MARKDOWN_OUTPUT_SUPPORTED
     db = SessionLocal()
 
     try:
@@ -544,10 +547,30 @@ async def get_document_markdown(title: str):
             matrix = fitz.Matrix(2, 2)
 
             for index, page in enumerate(doc_handle, start=1):
-                page_markdown = page.get_text("markdown").strip()
+                page_markdown = ""
+
+                if MARKDOWN_OUTPUT_SUPPORTED:
+                    try:
+                        page_markdown = page.get_text("markdown").strip()
+                    except (AssertionError, RuntimeError, ValueError) as exc:
+                        MARKDOWN_OUTPUT_SUPPORTED = False
+                        logger.warning(
+                            "PyMuPDF markdown extraction unsupported; falling back to plain text: %s",
+                            exc,
+                        )
+                        page_markdown = ""
 
                 if not page_markdown:
-                    page_text = page.get_text().strip()
+                    page_text = ""
+                    try:
+                        page_text = page.get_text().strip()
+                    except (RuntimeError, ValueError) as exc:  # noqa: BLE001
+                        logger.error(
+                            "Text extraction failed while rendering markdown for %s page %s: %s",
+                            matched_doc.filename,
+                            index,
+                            exc,
+                        )
 
                     if not page_text:
                         try:
