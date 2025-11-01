@@ -277,9 +277,11 @@ The MCP service exposes lightweight HTTP endpoints that Cursor and other MCP cli
 | Method | Path | Purpose | Notes |
 | --- | --- | --- | --- |
 | `GET` | `/mcp/query` | Perform a semantic search against the vector database. | Provide a `query` string; returns the top 5 chunks with metadata. |
-| `GET` | `/mcp/documents/markdown` | Retrieve a processed PDF rendered as Markdown. | Pass a `title` query parameter that matches the document filename (substring or fuzzy match). Returns the entire document formatted into Markdown pages. |
+| `GET` | `/mcp/documents/markdown` | Retrieve a processed PDF rendered as Markdown. | Pass a `title` query parameter that matches the document filename (substring or fuzzy match). Optional `start_page`, `max_pages`, and `max_characters` parameters let you page through large documents without overrunning client context limits. |
 
 Both endpoints return standard JSON responses and error codes (`404` for missing matches, `409` for in-progress/blacklisted files, etc.), making them easy to script against outside of MCP clients.
+
+When using the Markdown endpoint with paging controls, the response echoes the window that was returned, indicates whether additional pages remain (`has_more`), and provides the next page cursor (`next_page`) you can supply as the subsequent `start_page`. This makes it straightforward to stream long specifications to an LLM in manageable chunks. The `max_characters` guard expects a budget of at least 2 000 characters to ensure at least one full page can be returned.
 
 ## Troubleshooting
 

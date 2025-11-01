@@ -506,10 +506,29 @@ async def query_knowledge_base(query: str):
 
 
 @mcp_app.get("/documents/markdown")
-async def get_document_markdown(title: str):
-    """Return the full PDF content rendered as Markdown for MCP clients."""
+async def get_document_markdown(
+    title: str,
+    start_page: int = 1,
+    max_pages: int | None = None,
+    max_characters: int | None = None,
+):
+    """Return PDF content rendered as Markdown with optional paging limits.
+
+    Args:
+        title: Document title or filename fragment to match.
+        start_page: 1-indexed page to begin rendering from.
+        max_pages: Maximum number of pages to include starting at ``start_page``.
+        max_characters: Optional character budget for the rendered page content.
+    """
     if not title or not title.strip():
         raise HTTPException(status_code=400, detail="Title query must be provided")
+
+    if start_page < 1:
+        raise HTTPException(status_code=400, detail="start_page must be >= 1")
+    if max_pages is not None and max_pages < 1:
+        raise HTTPException(status_code=400, detail="max_pages must be >= 1 when supplied")
+    if max_characters is not None and max_characters < 2000:
+        raise HTTPException(status_code=400, detail="max_characters must be at least 2000 when supplied")
 
     query_normalized = title.strip().lower()
     global MARKDOWN_OUTPUT_SUPPORTED
@@ -543,10 +562,24 @@ async def get_document_markdown(title: str):
 
         doc_handle = fitz.open(matched_doc.file_path)
         try:
-            markdown_sections = [f"# {matched_doc.filename}\n"]
+            total_pages = doc_handle.page_count
+            if start_page > total_pages:
+                raise HTTPException(status_code=404, detail="start_page exceeds document length")
+
+            last_page_allowed = total_pages
+            if max_pages is not None:
+                last_page_allowed = min(total_pages, start_page + max_pages - 1)
+
+            markdown_header = f"# {matched_doc.filename}\n"
+            page_sections: list[str] = []
+            characters_consumed = 0
+            processed_pages = 0
+            last_page_rendered = start_page - 1
+            truncated_by_budget = False
             matrix = fitz.Matrix(2, 2)
 
-            for index, page in enumerate(doc_handle, start=1):
+            for page_number in range(start_page, last_page_allowed + 1):
+                page = doc_handle.load_page(page_number - 1)
                 page_markdown = ""
 
                 if MARKDOWN_OUTPUT_SUPPORTED:
@@ -589,15 +622,57 @@ async def get_document_markdown(title: str):
                     page_markdown = page_text
 
                 section_content = page_markdown.strip() if page_markdown else "_No extractable content_"
-                markdown_sections.append(f"## Page {index}\n\n{section_content}\n")
+                section_markdown = f"## Page {page_number}\n\n{section_content}\n"
+
+                if max_characters is not None:
+                    remaining_budget = max_characters - characters_consumed
+                    if remaining_budget <= 0:
+                        truncated_by_budget = True
+                        break
+                    if len(section_markdown) > remaining_budget:
+                        if not page_sections:
+                            raise HTTPException(
+                                status_code=400,
+                                detail="max_characters is too restrictive to include a single page",
+                            )
+                        truncated_by_budget = True
+                        break
+
+                page_sections.append(section_markdown)
+                characters_consumed += len(section_markdown)
+                processed_pages += 1
+                last_page_rendered = page_number
+
+                if max_characters is not None and characters_consumed >= max_characters:
+                    truncated_by_budget = True
+                    break
 
         finally:
             doc_handle.close()
 
+        if processed_pages == 0:
+            raise HTTPException(status_code=500, detail="No pages were rendered")
+
+        if truncated_by_budget and last_page_rendered >= total_pages:
+            truncated_by_budget = False
+
+        end_page = last_page_rendered
+        has_more = end_page < total_pages or truncated_by_budget
+
+        page_window_line = f"_Pages {start_page}-{end_page} of {total_pages}_\n\n"
+        markdown_output = markdown_header + page_window_line + "".join(page_sections)
+
         return {
             "id": matched_doc.id,
             "filename": matched_doc.filename,
-            "markdown": "\n".join(markdown_sections),
+            "markdown": markdown_output,
+            "page_start": start_page,
+            "page_end": end_page,
+            "total_pages": total_pages,
+            "pages_returned": processed_pages,
+            "has_more": has_more,
+            "next_page": end_page + 1 if has_more and end_page < total_pages else None,
+            "truncated_by_characters": truncated_by_budget,
         }
     finally:
         db.close()
