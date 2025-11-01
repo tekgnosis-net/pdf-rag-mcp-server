@@ -73,6 +73,9 @@ web_modules/
 # Output of 'npm pack'
 *.tgz
 
+# Prevent platform-specific lockfiles from breaking multi-arch builds
+frontend/package-lock.json
+
 # Yarn Integrity file
 .yarn-integrity
 

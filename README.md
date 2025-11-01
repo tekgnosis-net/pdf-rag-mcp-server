@@ -131,6 +131,8 @@ This script will automatically:
 - Build the frontend
 - Copy the build output to the backend's static directory
 
+> **Note:** We intentionally do not commit `frontend/package-lock.json` because npm currently omits the ARM64 Rollup binary when the lockfile is generated on x86_64. Running `npm install --legacy-peer-deps` (as the Docker build does) ensures platform-specific packages are fetched at install time without needing the lockfile.
+
 #### Option 2: Manual build process
 
 ```bash
