@@ -1,3 +1,10 @@
+# [1.3.0](https://github.com/tekgnosis-net/pdf-rag-mcp-server/compare/v1.2.1...v1.3.0) (2025-11-08)
+
+
+### Features
+
+* **vector-store:** rebuild embeddings from markdown on reset ([490838d](https://github.com/tekgnosis-net/pdf-rag-mcp-server/commit/490838d5ac9bde9b8272258ddc218c8fdd54e249))
+
 ## [1.2.1](https://github.com/tekgnosis-net/pdf-rag-mcp-server/compare/v1.2.0...v1.2.1) (2025-11-08)
 
 
