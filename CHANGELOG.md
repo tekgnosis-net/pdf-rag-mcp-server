@@ -1,3 +1,10 @@
+# [1.2.0](https://github.com/tekgnosis-net/pdf-rag-mcp-server/compare/v1.1.0...v1.2.0) (2025-11-08)
+
+
+### Features
+
+* **search:** add paginated search ui and api ([ad49ab0](https://github.com/tekgnosis-net/pdf-rag-mcp-server/commit/ad49ab04b548f3c063caf85caeb4f9582178afd9))
+
 # [1.1.0](https://github.com/tekgnosis-net/pdf-rag-mcp-server/compare/v1.0.0...v1.1.0) (2025-11-08)
 
 
