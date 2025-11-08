@@ -6,12 +6,14 @@ This module provides a vector database interface for storing and retrieving vect
 # Standard library imports
 import logging
 import os
+import shutil
 from typing import Any, Dict, List, Optional
 
 # Third-party library imports
 import chromadb
 import numpy as np
 from chromadb.config import Settings
+from chromadb.errors import InternalError
 
 # Configure logging
 logging.basicConfig(
@@ -40,22 +42,70 @@ class VectorStore:
         
         # Convert relative path to absolute path
         persist_directory = os.path.abspath(persist_directory)
-        
-        logger.info(f"Initializing vector database, persistence directory: {persist_directory}")
-        
+        self.persist_directory = persist_directory
+
+        logger.info("Initializing vector database, persistence directory: %s", persist_directory)
+
         # Ensure directory exists
         os.makedirs(persist_directory, exist_ok=True)
-        
+
         try:
-            # Use persistence configuration
-            self.client = chromadb.PersistentClient(path=persist_directory)
-            self.collection = self.client.get_or_create_collection("pdf_documents")
-            logger.info(
-                f"Successfully connected to vector database, current document count: {self.collection.count()}"
+            self._initialize_collection()
+        except InternalError as exc:
+            logger.error("Chroma raised InternalError during initialization: %s", exc)
+
+            recovered = False
+            if getattr(self, "client", None) is not None:
+                recovered = self._reset_collection()
+
+            if recovered:
+                try:
+                    self._initialize_collection()
+                    logger.info("Vector store recovered after collection reset")
+                    return
+                except InternalError as exc_retry:
+                    logger.error("Reinitialization after collection reset failed: %s", exc_retry)
+                    exc = exc_retry
+
+            logger.warning(
+                "Resetting persisted vector store at %s due to repeated Chroma internal errors",
+                self.persist_directory,
             )
-        except Exception as e:
-            logger.error(f"Error connecting to vector database: {str(e)}")
+            self._wipe_persistence()
+            self._initialize_collection()
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Error connecting to vector database: %s", exc)
             raise
+
+    def _initialize_collection(self):
+        """Create or reload the Chroma client and ensure the collection is available."""
+        self.client = chromadb.PersistentClient(path=self.persist_directory)
+        self.collection = self.client.get_or_create_collection("pdf_documents")
+        count = self.collection.count()
+        logger.info(
+            "Successfully connected to vector database, current document count: %s",
+            count,
+        )
+
+    def _reset_collection(self) -> bool:
+        """Attempt to delete and recreate a corrupted collection without wiping the store."""
+        try:
+            self.client.delete_collection("pdf_documents")
+            logger.info("Deleted existing pdf_documents collection; will recreate")
+            return True
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Failed to delete pdf_documents collection: %s", exc)
+            return False
+
+    def _wipe_persistence(self):
+        """Remove the persisted Chroma directory to recover from corruption."""
+        try:
+            if os.path.isdir(self.persist_directory):
+                shutil.rmtree(self.persist_directory)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Failed to remove persisted vector store at %s: %s", self.persist_directory, exc)
+        finally:
+            os.makedirs(self.persist_directory, exist_ok=True)
     
     def add_documents(
         self, 
