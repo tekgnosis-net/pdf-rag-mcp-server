@@ -40,6 +40,21 @@ A powerful document knowledge base system that leverages PDF processing, vector 
 - **Blacklist Controls**: Dedicated Settings page to add or remove filenames that should be skipped during ingestion
 - **Interactive Search Console**: Dedicated search page with pagination and markdown previews for matching chunks
 
+## Release Highlights
+
+### v1.2.1 (2025-11-08)
+
+- Hardens the vector store restart path by rebuilding Chroma embeddings from the persisted markdown cache, avoiding expensive PDF reprocessing after container crashes.
+
+### v1.2.0 (2025-11-08)
+
+- Introduces the Search page (`/search`) with paginated semantic results, markdown previews, and parity `limit`/`offset` paging support in the MCP `/query` endpoint.
+- Updates the combined release workflow to always build and push Docker images (including rolling tags when no new release is cut).
+
+### v1.1.0 (2025-11-08)
+
+- Adds the Settings page for managing blacklist entries and reviewing automatically blacklisted documents.
+
 ## System Architecture
 
 The system consists of:
