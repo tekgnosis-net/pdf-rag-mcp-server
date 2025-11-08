@@ -21,8 +21,8 @@ jobs:
       packages: write
     outputs:
       release_published: ${{ steps.semantic.outputs.new_release_published }}
-      release_version: ${{ steps.semantic.outputs.new_release_version }}
-      release_tag: ${{ steps.semantic.outputs.new_release_git_tag }}
+      release_version: ${{ steps.versioning.outputs.release_version }}
+      release_tag: ${{ steps.versioning.outputs.release_tag }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -44,9 +44,23 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Determine release metadata
+        id: versioning
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.semantic.outputs.new_release_published }}" = "true" ]; then
+            echo "release_version=${{ steps.semantic.outputs.new_release_version }}" >> "$GITHUB_OUTPUT"
+            echo "release_tag=${{ steps.semantic.outputs.new_release_git_tag }}" >> "$GITHUB_OUTPUT"
+          else
+            pkg_version=$(node -p "require('./package.json').version")
+            short_sha=$(echo "${GITHUB_SHA}" | cut -c1-12)
+            echo "release_version=${pkg_version}" >> "$GITHUB_OUTPUT"
+            echo "release_tag=rolling-${short_sha}" >> "$GITHUB_OUTPUT"
+          fi
+
   docker:
     needs: release
-    if: needs.release.outputs.release_published == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
