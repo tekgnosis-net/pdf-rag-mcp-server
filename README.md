@@ -37,6 +37,7 @@ A powerful document knowledge base system that leverages PDF processing, vector 
 - **Fast Dependency Management**: Uses uv for efficient Python dependency management
 - **Automatic Directory Ingestion**: Watches a mounted folder and processes new or updated PDFs without manual uploads
 - **Markdown Export**: Render any processed PDF as Markdown via MCP or the dashboard for quick reading and copy/paste
+- **Blacklist Controls**: Dedicated Settings page to add or remove filenames that should be skipped during ingestion
 
 ## System Architecture
 
@@ -261,6 +262,16 @@ To build a bespoke image (for example, to change the embedded user/group IDs), c
 ### Viewing Markdown in the Dashboard
 
 Once a document finishes processing, the dashboard now offers a **View Markdown** action next to each entry. Clicking it fetches the pre-rendered Markdown (using the same title matching as the MCP endpoint) and displays it in a modal with rich formatting. From there you can copy the text or scroll through the rendered pages without leaving the browser.
+
+### Managing the Blacklist
+
+Select **Settings** in the navigation bar to review and manage the blacklist. You can:
+
+- Add an exact filename (with an optional reason) to stop it from being queued again;
+- Remove entries when you are ready to reprocess the file;
+- See when an item was blacklisted and why. The backend stores this information in the database so it persists across restarts.
+
+If a PDF fails OCR or contains no readable text, the processor automatically blacklists it and records the reason here so you can triage the issue later.
 
 ### MCP Integration with Cursor
 
