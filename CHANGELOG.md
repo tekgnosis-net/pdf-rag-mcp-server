@@ -1,3 +1,10 @@
+# [1.4.0](https://github.com/tekgnosis-net/pdf-rag-mcp-server/compare/v1.3.0...v1.4.0) (2025-11-08)
+
+
+### Features
+
+* add lance vector backend with async rebuild ([f2352cc](https://github.com/tekgnosis-net/pdf-rag-mcp-server/commit/f2352ccfe9039ec24498e8f034ff9b5bdebdd24d))
+
 # [1.3.0](https://github.com/tekgnosis-net/pdf-rag-mcp-server/compare/v1.2.1...v1.3.0) (2025-11-08)
 
 
