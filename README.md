@@ -27,6 +27,45 @@
 
 A powerful document knowledge base system that leverages PDF processing, vector storage, and MCP (Model Context Protocol) to provide semantic search capabilities for PDF documents. This system allows you to upload, process, and query PDF documents through a modern web interface or via the MCP protocol for integration with AI tools like Cursor.
 
+## Table of Contents
+- [PDF RAG MCP Server](#pdf-rag-mcp-server)
+  - [Table of Contents](#table-of-contents)
+  - [Features](#features)
+  - [Release Highlights](#release-highlights)
+    - [v1.3.0 (2025-11-08)](#v130-2025-11-08)
+    - [v1.2.1 (2025-11-08)](#v121-2025-11-08)
+    - [v1.2.0 (2025-11-08)](#v120-2025-11-08)
+    - [v1.1.0 (2025-11-08)](#v110-2025-11-08)
+  - [System Architecture](#system-architecture)
+  - [Automatic PDF Ingestion](#automatic-pdf-ingestion)
+  - [Quick Start](#quick-start)
+    - [Prerequisites](#prerequisites)
+    - [Quick Installation and Startup with uv and run.py](#quick-installation-and-startup-with-uv-and-runpy)
+    - [Building the Frontend (For Developers)](#building-the-frontend-for-developers)
+      - [Option 1: Using the provided script (recommended)](#option-1-using-the-provided-script-recommended)
+      - [Option 2: Manual build process](#option-2-manual-build-process)
+    - [Simple Production Setup](#simple-production-setup)
+    - [Development Setup (Separate Services)](#development-setup-separate-services)
+      - [Backend](#backend)
+      - [Frontend](#frontend)
+  - [Docker Deployment](#docker-deployment)
+    - [Environment Configuration](#environment-configuration)
+    - [Running with Docker Compose](#running-with-docker-compose)
+  - [Usage](#usage)
+    - [Uploading Documents](#uploading-documents)
+    - [Searching Documents](#searching-documents)
+    - [Viewing Markdown in the Dashboard](#viewing-markdown-in-the-dashboard)
+    - [Managing the Blacklist](#managing-the-blacklist)
+    - [Searching the Knowledge Base](#searching-the-knowledge-base)
+    - [MCP Integration with Cursor](#mcp-integration-with-cursor)
+  - [MCP API Methods](#mcp-api-methods)
+  - [Troubleshooting](#troubleshooting)
+    - [Connection Issues](#connection-issues)
+    - [Processing Issues](#processing-issues)
+  - [Project Structure](#project-structure)
+  - [Contributing](#contributing)
+  - [License](#license)
+
 ## Features
 
 - **PDF Document Upload & Processing**: Upload PDFs and automatically extract, chunk, and vectorize content
@@ -41,6 +80,10 @@ A powerful document knowledge base system that leverages PDF processing, vector 
 - **Interactive Search Console**: Dedicated search page with pagination and markdown previews for matching chunks
 
 ## Release Highlights
+
+### v1.3.0 (2025-11-08)
+
+- Rebuilds Chroma embeddings from the cached markdown snapshot when resetting the vector store so large PDF collections recover instantly after maintenance jobs.
 
 ### v1.2.1 (2025-11-08)
 

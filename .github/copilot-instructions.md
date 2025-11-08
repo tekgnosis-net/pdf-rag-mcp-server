@@ -12,6 +12,7 @@
 - **Runtime parity**: When merging frontend rewrites, ensure Dockerfile entrypoints, runtime scripts, and dependency sets are updated in the same change so published images launch the new stack.
 - **Python environment**: Ensure all Python code is compatible with Python 3.11+ and leverages type hints where appropriate. Use virtual environments for local development to manage dependencies effectively.
 - **Workflows**: Ensure github workflows are monitored after changes to catch any issues early. Use gh to check workflow statuses regularly.
+- **Workflow topology**: `Release and Publish` (single workflow) runs semantic-release and always builds/pushes GHCR images. When no new release is cut it tags the image as `rolling-<sha>` alongside `latest`; there is no standalone docker workflow anymore, so failures here block image publication.
 - **Copilot instructions file**: Treat this document as living release notes for contributors—whenever code, dependencies, or workflows change, review the diff and update this file with the new expectations before you finish the task. Never push this file to github main branch but keep it in feature branches for reference. Always maintain it locally for developer guidance.
 
 ## Release & versioning (Not to be changed)
@@ -20,6 +21,7 @@
 - **Version sync**: `scripts/update-version.cjs` runs during the semantic-release `prepare` step to update `package.json` and `package-lock.json`; the Docker build arg `APP_VERSION` propagates the same value into runtime assets.
 - **Artifacts**: Successful releases publish GitHub releases, append to `CHANGELOG.md`, and tag GHCR images with both the computed SemVer (from the release tag) and `latest` via `.github/workflows/docker-publish.yml`.
 - **Pipeline alignment**: The release workflow runs on Node 20—match that locally when testing semantic-release, and ensure Docker builds include the `APP_VERSION` build arg so UI banners and metadata remain in sync.
+- **Release docs**: If semantic-release publishes a new minor or major version (e.g. 1.2.x → 1.3.x), update the README with a short note summarizing the release highlights before you finish the task.
 - **Commit hygiene**: Format commit messages as Conventional Commits (`feat`, `fix`, `chore`, etc.) to ensure correct version bumps.
 
 
@@ -44,6 +46,7 @@
 - **WebSockets**: `frontend/src/context/WebSocketContext.jsx` hard-codes `ws://{hostname}:8000/ws` with auto-retry to drive live progress; any new event types should follow the same `{type, ...}` envelope.
 - **Frontend API usage**: Components use Axios with relative paths (e.g., `/api/upload` in `FileUpload.jsx`, `/api/documents` in `Dashboard.jsx`); align backend route signatures with these expectations or update both sides together.
 - **UI conventions**: Chakra UI drives layout; keep new components within `frontend/src/components` and wire them through `Dashboard` or `PDFView` using the existing context providers.
+- **Search UX**: The navigation now includes a dedicated Search page (`/search`) that calls `/api/search`; backend pagination parameters (`limit`, `offset`) must stay in sync with the MCP `/query` endpoint.
 - **Storage hygiene**: Large artifacts accumulate in `uploads/` and `backend/chroma_db/`; `backend/tests/test_query.py --reset` invokes `VectorStore.reset()` for clean test runs.
 - **Diagnostics**: Logging is already configured in `pdf_processor` and `vector_store`; prefer `logger.info`/`logger.error` over prints when extending backend workflows to keep messages consistent across async tasks.
 - **Testing utility**: `python backend/tests/test_query.py --query` exercises vector searches; other flags (`--list`, `--process`, `--reset`) help validate ingestion without hitting the HTTP API.
