@@ -1,0 +1,31 @@
+# PDF RAG MCP Server – Agent Guide
+- **Instruction upkeep**: When you touch the codebase, reassess these guidelines and update them so they continue to reflect current behaviour and testing expectations.
+- **Architecture**: `backend/app/main.py` hosts the FastAPI REST API, background processing, WebSocket broadcasting, and mounts an MCP-specific FastAPI (`mcp_app`) for Model Context Protocol clients.
+- **HTTP API**: Primary routes live in `backend/app/main.py`; `/api/upload` queues background processing, `/api/documents` surfaces status, `/api/documents/{id}` and `DELETE` manage lifecycle.
+- **Upload flow**: Files land in `./uploads` (created relative to the backend working directory), gain a DB row in `PDFDocument` (`backend/app/database.py`), then `_process_pdf_background` awaits `PDFProcessor.process_pdf`.
+- **Auto-ingest**: `PDFDirectoryWatcher` (`backend/app/pdf_watcher.py`) scans `PDF_RAG_WATCH_DIR` (mapped via Compose) for PDFs, inserts/updates `PDFDocument` rows, and reuses `PDFProcessor.process_pdf`; it compares the file’s `mtime` against `uploaded_at` to avoid reprocessing unchanged files and purges old embeddings via `VectorStore.delete` before reruns.
+- **Processing status**: Progress is tracked via the module-level `PROCESSING_STATUS` dict in `backend/app/pdf_processor.py`; WebSocket clients expect `{"type": "processing_update", "filename", "status"}` payloads, so preserve that contract.
+- **Chunking pipeline**: `PDFProcessor` uses PyMuPDF for extraction and LangChain's `RecursiveCharacterTextSplitter` (1 000/200 overlap). Coordinate changes with chunk metadata assumptions in `VectorStore` and query formatting.
+- **Embedding model**: Both `PDFProcessor` and `/query` reuse the singleton `SentenceTransformer("all-MiniLM-L6-v2")`; avoid re-instantiating it inside request handlers to prevent GPU/CPU thrash.
+- **Chunk metadata**: Metadata written to Chroma includes `pdf_id`, `chunk_id`, `page`, and `batch`; downstream code (query responses, deletions) relies on these keys, so extend rather than replace them.
+- **Vector maintenance**: `backend/app/vector_store.py` wraps a persistent Chroma client stored under `backend/chroma_db`; use its `add_documents`, `delete`, and `reset` helpers instead of calling Chroma directly.
+- **Database**: SQLite lives at `backend/pdf_knowledge_base.db`; session helpers come from `get_db()` in `database.py`. Remember to close sessions when writing new background utilities.
+- **Deletion logic**: `/api/documents/{id}` cleans up files, vector entries, and DB rows; replicate its filtering logic if you add batch-delete features so partial-processing assets are removed.
+- **Static serving**: The backend serves from `backend/app/static`; `vite.config.js` sets `base: '/static/'`, so production builds must land in that folder structure (index + nested `static/assets`).
+- **Frontend build**: `build_frontend.py` installs deps, runs `npm run build`, and copies `frontend/dist` into `backend/app/static`; prefer this script whenever you regenerate assets.
+- **Dev servers**: Run `uv pip install -r backend/requirements.txt` then `uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload` for the backend; `npm install` + `npm run dev` starts Vite with API/WebSocket proxying to `localhost:8000`.
+- **Local images**: Prefer `docker build -t pdf-rag-mcp-server:local .` for backend image changes, then start services with `PDF_RAG_IMAGE=pdf-rag-mcp-server:local docker compose up -d`; avoid `docker compose build` because `docker-compose.yml` lacks a build section.
+- **Combined start**: `uv run run.py` (or `python run.py`) expects pre-built static files and also launches the MCP server thread on port 7800.
+- **MCP endpoint**: `FastApiMCP` mounts `mcp_app` under `/mcp/v1`; Cursor clients typically hit `http://localhost:7800/mcp`, so keep that route stable or update docs/UI hints (see `Dashboard.jsx`).
+- **WebSockets**: `frontend/src/context/WebSocketContext.jsx` hard-codes `ws://{hostname}:8000/ws` with auto-retry to drive live progress; any new event types should follow the same `{type, ...}` envelope.
+- **Frontend API usage**: Components use Axios with relative paths (e.g., `/api/upload` in `FileUpload.jsx`, `/api/documents` in `Dashboard.jsx`); align backend route signatures with these expectations or update both sides together.
+- **UI conventions**: Chakra UI drives layout; keep new components within `frontend/src/components` and wire them through `Dashboard` or `PDFView` using the existing context providers.
+- **Storage hygiene**: Large artifacts accumulate in `uploads/` and `backend/chroma_db/`; `backend/tests/test_query.py --reset` invokes `VectorStore.reset()` for clean test runs.
+- **Diagnostics**: Logging is already configured in `pdf_processor` and `vector_store`; prefer `logger.info`/`logger.error` over prints when extending backend workflows to keep messages consistent across async tasks.
+- **Testing utility**: `python backend/tests/test_query.py --query` exercises vector searches; other flags (`--list`, `--process`, `--reset`) help validate ingestion without hitting the HTTP API.
+- **When adding features**: Mirror new REST routes with accompanying WebSocket or MCP hooks if they affect long-running tasks, and document any new background events so front-end consumers can subscribe safely.
+- **Syntax hygiene**: Before shipping changes, run `python -m compileall` against modified Python modules and `docker compose config` (or another YAML parser) over updated YAML to catch indentation or formatting issues early.
+- **Testing**: Test new features locally using the provided `docker-compose.sample.yml` (copy to `docker-compose.yml`), thoroughly before pushing changes.
+- **Python Use**: Use python3 locally instead of python.
+- **Cleanup**: After running compiles or builds, remove generated artifacts (e.g., `__pycache__`, build outputs, locally built Docker images) unless the user explicitly asks to keep them.
+- **Committing changes**: Ensure pushing commits to master and branches.

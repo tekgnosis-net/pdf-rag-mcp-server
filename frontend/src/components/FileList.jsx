@@ -1,28 +1,33 @@
-import React from 'react';  
-import {   
-  Box,   
-  Table,   
-  Thead,   
-  Tbody,   
-  Tr,   
-  Th,   
-  Td,   
-  IconButton,   
-  Badge,  
-  Tooltip,  
-  Text,  
-  HStack,  
-  useToast,
+import React from 'react';
+import {
+  Badge,
+  Box,
   Button,
-  useDisclosure,
+  Divider,
+  HStack,
+  IconButton,
   Modal,
-  ModalOverlay,
-  ModalContent,
-  ModalHeader,
-  ModalCloseButton,
   ModalBody,
+  ModalCloseButton,
+  ModalContent,
   ModalFooter,
+  ModalHeader,
+  ModalOverlay,
   Spinner,
+  Stack,
+  Table,
+  Tbody,
+  Td,
+  Text,
+  Th,
+  Thead,
+  Tooltip,
+  Tr,
+  useBreakpointValue,
+  useDisclosure,
+  useToast,
+  Wrap,
+  WrapItem,
 } from '@chakra-ui/react';  
 import { FiTrash, FiInfo, FiBookOpen } from 'react-icons/fi';  
 import axios from 'axios';  
@@ -32,12 +37,13 @@ import { fetchDocumentMarkdown } from '../api/documents';
 import ReactMarkdown from 'react-markdown';
 
 
-const FileList = ({ documents, onDeleteDocument, showProgress }) => {  
+const FileListComponent = ({ documents, onDeleteDocument, showProgress }) => {  
   const toast = useToast();  
   const { isOpen, onOpen, onClose } = useDisclosure();
   const [markdownContent, setMarkdownContent] = React.useState(null);
   const [selectedDocument, setSelectedDocument] = React.useState(null);
   const [loadingMarkdown, setLoadingMarkdown] = React.useState(false);
+  const isMobileLayout = useBreakpointValue({ base: true, md: false });
 
   const handleDelete = async (id, filename) => {  
     try {  
@@ -91,7 +97,7 @@ const FileList = ({ documents, onDeleteDocument, showProgress }) => {
     onOpen();
 
     try {
-      const data = await fetchDocumentMarkdown(doc.filename);
+      const data = await fetchDocumentMarkdown({ id: doc.id });
       setMarkdownContent(data.markdown);
     } catch (error) {
       console.error('Failed to fetch markdown:', error);
@@ -109,9 +115,9 @@ const FileList = ({ documents, onDeleteDocument, showProgress }) => {
     }
   };
 
-  return (  
-    <Box overflowX="auto">  
-      <Table variant="simple" size="sm">  
+  const renderDesktopTable = () => (
+    <Box overflowX="auto">
+      <Table variant="simple" size="sm">
         <Thead>  
           <Tr>  
             <Th>Filename</Th>  
@@ -149,41 +155,118 @@ const FileList = ({ documents, onDeleteDocument, showProgress }) => {
               {showProgress && (  
                 <Td>  
                   <Box>  
-                    <ProgressBar   
-                      value={doc.progress}   
-                      status={doc.statusText}   
+                    <ProgressBar  
+                      progress={doc.progress}  
+                      status={doc.statusText}  
                       colorScheme={doc.error ? "red" : "blue"}  
+                      pageCurrent={doc.pageCurrent}  
+                      pageTotal={doc.pageTotal}  
                     />  
                   </Box>  
                 </Td>  
               )}  
-              <Td>  
-                <HStack spacing={2}>  
-                  <Button  
-                    size="sm"  
-                    leftIcon={<FiBookOpen />}  
-                    variant="ghost"  
-                    colorScheme="purple"  
+              <Td>
+                <HStack spacing={2} justify="flex-end">
+                  <Button
+                    size="sm"
+                    leftIcon={<FiBookOpen />}
+                    variant="ghost"
+                    colorScheme="purple"
                     isDisabled={!doc.processed || !!doc.error || doc.blacklisted}
                     onClick={() => handleViewMarkdown(doc)}
                   >
                     View Markdown
                   </Button>
-                <IconButton  
-                  icon={<FiTrash />}  
-                  aria-label="Delete document"  
-                  size="sm"  
-                  colorScheme="red"  
-                  variant="ghost"  
-                  isDisabled={doc.processing}  
-                  onClick={() => handleDelete(doc.id, doc.filename)}  
-                />  
+                  <IconButton  
+                    icon={<FiTrash />}  
+                    aria-label="Delete document"  
+                    size="sm"  
+                    colorScheme="red"  
+                    variant="ghost"  
+                    isDisabled={doc.processing}  
+                    onClick={() => handleDelete(doc.id, doc.filename)}  
+                  />
                 </HStack>
-              </Td>  
+              </Td>
             </Tr>  
           ))}  
         </Tbody>  
       </Table>  
+    </Box>
+  );
+
+  const renderMobileCards = () => (
+    <Stack spacing={4}>
+      {documents.map((doc) => (
+        <Box
+          key={doc.id}
+          borderWidth="1px"
+          borderRadius="lg"
+          p={4}
+          bg="white"
+          shadow="sm"
+        >
+          <Stack spacing={3}>
+            <Box>
+              <Text fontWeight="semibold" noOfLines={2}>{doc.filename}</Text>
+              <Wrap spacing={2} mt={1} shouldWrapChildren>
+                <WrapItem>{getStatusBadge(doc)}</WrapItem>
+                <WrapItem>
+                  <Text fontSize="xs" color="gray.500">
+                    {formatDistance(new Date(doc.uploaded_at), new Date(), { addSuffix: true })}
+                  </Text>
+                </WrapItem>
+              </Wrap>
+              <Text fontSize="sm" color="gray.600" mt={1}>
+                {formatFileSize(doc.file_size)}
+              </Text>
+            </Box>
+
+            {showProgress && (
+              <ProgressBar
+                progress={doc.progress}
+                status={doc.statusText}
+                colorScheme={doc.error ? 'red' : 'blue'}
+                pageCurrent={doc.pageCurrent}
+                pageTotal={doc.pageTotal}
+              />
+            )}
+
+            {doc.error && (
+              <Text fontSize="sm" color="red.500">{doc.error}</Text>
+            )}
+
+            <Divider />
+
+            <Stack direction={{ base: 'column', sm: 'row' }} spacing={2} justify="space-between">
+              <Button
+                leftIcon={<FiBookOpen />}
+                variant="solid"
+                colorScheme="purple"
+                isDisabled={!doc.processed || !!doc.error || doc.blacklisted}
+                onClick={() => handleViewMarkdown(doc)}
+              >
+                View Markdown
+              </Button>
+              <Button
+                leftIcon={<FiTrash />}
+                variant="outline"
+                colorScheme="red"
+                isDisabled={doc.processing}
+                onClick={() => handleDelete(doc.id, doc.filename)}
+              >
+                Delete
+              </Button>
+            </Stack>
+          </Stack>
+        </Box>
+      ))}
+    </Stack>
+  );
+
+  return (
+    <Box>
+      {isMobileLayout ? renderMobileCards() : renderDesktopTable()}
       <Modal isOpen={isOpen} onClose={onClose} size="5xl">
         <ModalOverlay />
         <ModalContent>
@@ -217,8 +300,10 @@ const FileList = ({ documents, onDeleteDocument, showProgress }) => {
           </ModalFooter>
         </ModalContent>
       </Modal>
-    </Box>  
+    </Box>
   );  
 };  
 
-export default FileList;
+FileListComponent.displayName = 'FileList';
+
+export default React.memo(FileListComponent);
