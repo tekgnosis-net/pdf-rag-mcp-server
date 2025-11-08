@@ -21,6 +21,34 @@ logger = logging.getLogger("vector_store.lance")
 
 class LanceVectorBackend(BaseVectorBackend):
     """Vector backend backed by LanceDB tables."""
+    @staticmethod
+    def _load_sentence_transformer(device_preference: str) -> SentenceTransformer:
+        """Load SentenceTransformer while handling GPU fallbacks and meta tensor issues."""
+        try:
+            return SentenceTransformer("all-MiniLM-L6-v2", device=device_preference)
+        except NotImplementedError as exc:
+            logger.warning(
+                "SentenceTransformer failed on device '%s' due to meta tensors: %s; falling back to default init",
+                device_preference,
+                exc,
+            )
+        except Exception as exc:  # noqa: BLE001
+            if device_preference.lower() != "cpu":
+                logger.warning(
+                    "SentenceTransformer failed on device '%s': %s; retrying on CPU",
+                    device_preference,
+                    exc,
+                )
+            else:
+                raise
+
+        # Final fallback path: initialise without explicit device, then move to CPU explicitly.
+        try:
+            model = SentenceTransformer("all-MiniLM-L6-v2")
+            return model
+        except Exception as final_exc:  # noqa: BLE001
+            logger.error("SentenceTransformer initialization failed on all attempts: %s", final_exc)
+            raise
 
     _TABLE_NAME = "pdf_documents"
 
@@ -58,10 +86,21 @@ class LanceVectorBackend(BaseVectorBackend):
             return
         if not records:
             return
+        existing = self._open_table()
+        if existing is not None:
+            self.table = existing
+            return
+
         try:
             self.table = self.client.create_table(self._TABLE_NAME, records)
             logger.info("Created Lance table with %s initial rows", len(records))
         except Exception as exc:  # noqa: BLE001
+            message = str(exc)
+            if "already exists" in message.lower():
+                logger.info("Lance table already existed; opening existing table")
+                self.table = self._open_table()
+                if self.table is not None:
+                    return
             logger.error("Unable to create Lance table: %s", exc)
             raise
 
@@ -104,8 +143,8 @@ class LanceVectorBackend(BaseVectorBackend):
             if self.table is None:
                 self._ensure_table(records)
                 if self.table is None:
+                    logger.error("Lance table could not be initialized for add_documents call")
                     return False
-                return True
             self.table.add(records)
             return True
         except Exception as exc:  # noqa: BLE001
@@ -225,7 +264,11 @@ class LanceVectorBackend(BaseVectorBackend):
                 id_list = list(ids)
                 if not id_list:
                     return True
-                quoted = ",".join(f"'{item.replace("'", "''")}'" for item in id_list)
+                quoted_items = []
+                for item in id_list:
+                    safe_item = str(item).replace("'", "''")
+                    quoted_items.append(f"'{safe_item}'")
+                quoted = ",".join(quoted_items)
                 self.table.delete(where=f"id in ({quoted})")
                 return True
             logger.warning("Lance delete called without filter or ids")
@@ -258,18 +301,7 @@ class LanceVectorBackend(BaseVectorBackend):
 
             requested_device = os.getenv("SENTENCE_TRANSFORMERS_DEVICE", "cpu")
             logger.info("Rebuilding Lance embeddings on %s", requested_device)
-            try:
-                model = SentenceTransformer("all-MiniLM-L6-v2", device=requested_device)
-            except Exception as exc:  # noqa: BLE001
-                if requested_device.lower() != "cpu":
-                    logger.warning(
-                        "Falling back to CPU for Lance rebuild due to error on %s: %s",
-                        requested_device,
-                        exc,
-                    )
-                    model = SentenceTransformer("all-MiniLM-L6-v2", device="cpu")
-                else:
-                    raise
+            model = self._load_sentence_transformer(requested_device)
 
             rebuilt_any = False
             for doc in processed_docs:

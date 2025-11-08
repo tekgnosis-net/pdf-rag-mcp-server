@@ -23,6 +23,33 @@ logger = logging.getLogger("vector_store.chroma")
 
 class ChromaVectorBackend(BaseVectorBackend):
     """Vector backend powered by ChromaDB."""
+    @staticmethod
+    def _load_sentence_transformer(device_preference: str) -> SentenceTransformer:
+        """Load SentenceTransformer with resilience against meta tensor issues."""
+        try:
+            return SentenceTransformer("all-MiniLM-L6-v2", device=device_preference)
+        except NotImplementedError as exc:
+            logger.warning(
+                "SentenceTransformer failed on device '%s' due to meta tensors: %s; retrying with default init",
+                device_preference,
+                exc,
+            )
+        except Exception as exc:  # noqa: BLE001
+            if device_preference.lower() != "cpu":
+                logger.warning(
+                    "SentenceTransformer failed on device '%s': %s; fallback to CPU",
+                    device_preference,
+                    exc,
+                )
+            else:
+                raise
+
+        try:
+            model = SentenceTransformer("all-MiniLM-L6-v2")
+            return model
+        except Exception as final_exc:  # noqa: BLE001
+            logger.error("SentenceTransformer initialization failed for Chroma rebuild: %s", final_exc)
+            raise
 
     def __init__(self, persist_directory: Optional[str] = None):
         if persist_directory is None:
@@ -296,18 +323,7 @@ class ChromaVectorBackend(BaseVectorBackend):
 
             requested_device = os.getenv("SENTENCE_TRANSFORMERS_DEVICE", "cpu")
             logger.info("Rebuilding embeddings on device %s", requested_device)
-            try:
-                model = SentenceTransformer("all-MiniLM-L6-v2", device=requested_device)
-            except Exception as exc:  # noqa: BLE001
-                if requested_device.lower() != "cpu":
-                    logger.warning(
-                        "Falling back to CPU for rebuild due to error on %s: %s",
-                        requested_device,
-                        exc,
-                    )
-                    model = SentenceTransformer("all-MiniLM-L6-v2", device="cpu")
-                else:
-                    raise
+            model = self._load_sentence_transformer(requested_device)
 
             rebuilt_any = False
             for doc in processed_docs:
