@@ -1,3 +1,10 @@
+## [1.5.1](https://github.com/tekgnosis-net/pdf-rag-mcp-server/compare/v1.5.0...v1.5.1) (2025-11-08)
+
+
+### Bug Fixes
+
+* harden vector rebuild model loading ([652ce1c](https://github.com/tekgnosis-net/pdf-rag-mcp-server/commit/652ce1ce775c853e073132e90a60f88b2d3a3709))
+
 # [1.5.0](https://github.com/tekgnosis-net/pdf-rag-mcp-server/compare/v1.4.0...v1.5.0) (2025-11-08)
 
 
