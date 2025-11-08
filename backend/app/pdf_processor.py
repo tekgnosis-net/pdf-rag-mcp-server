@@ -24,6 +24,8 @@ from PIL import Image
 # Local application/library imports
 from app.database import PDFDocument, SessionLocal
 from app.vector_store import VectorStore
+from app.database import PDFMarkdownPage
+from app.websocket import manager
 
 # Configure logging
 logging.basicConfig(
@@ -69,6 +71,41 @@ class PDFProcessor:
             else:
                 raise
         self.vector_store = VectorStore()
+        self._last_broadcast: Dict[str, Dict[str, float | str]] = {}
+
+    async def _emit_status(self, filename: str):
+        """Broadcast the current processing status over WebSocket with basic throttling."""
+        status = PROCESSING_STATUS.get(filename)
+        if not status:
+            return
+
+        progress = float(status.get("progress", 0) or 0)
+        now = time.monotonic()
+        marker = {
+            "progress": progress,
+            "status": status.get("status", ""),
+            "ts": now,
+        }
+
+        previous = self._last_broadcast.get(filename)
+        # Only emit if status text changed or progress jumped at least 0.5%
+        if previous:
+            if (
+                marker["status"] == previous.get("status")
+                and abs(progress - float(previous.get("progress", 0))) < 0.2
+                and (now - float(previous.get("ts", 0))) < 1.0
+            ):
+                return
+
+        self._last_broadcast[filename] = marker
+        await manager.broadcast({
+            "type": "processing_update",
+            "filename": filename,
+            "status": status,
+        })
+
+    def _clear_broadcast_marker(self, filename: str):
+        self._last_broadcast.pop(filename, None)
         
     async def process_pdf(self, pdf_id: int, pdf_path: str, filename: str):
         """Asynchronously process a PDF file.
@@ -95,10 +132,12 @@ class PDFProcessor:
         PROCESSING_STATUS[filename] = {
             "progress": 0,
             "status": "Processing",
-            "page_current": 0
+            "page_current": 0,
+            "page_total": 0,
         }
         db.commit()
         logger.info(f"PDF processing status updated to processing")
+        await self._emit_status(filename)
         
         try:
             # Check if the file exists
@@ -108,17 +147,37 @@ class PDFProcessor:
                 pdf_doc.error = error_msg
                 pdf_doc.processing = False
                 db.commit()
+                await self._emit_status(filename)
+                self._clear_broadcast_marker(filename)
                 return False
                 
             # Open PDF
             logger.info(f"Opening PDF file: {pdf_path}")
             doc = fitz.open(pdf_path)
-            pdf_doc.page_count = len(doc)
+            total_pages = len(doc)
+            pdf_doc.page_count = total_pages
             db.commit()
-            logger.info(f"PDF page count: {len(doc)}")
-            
+            logger.info(f"PDF page count: {total_pages}")
+            PROCESSING_STATUS[filename]["page_total"] = total_pages
+            PROCESSING_STATUS[filename]["status"] = "Parsing PDF"
+            await self._emit_status(filename)
+            # Before persisting new markdown rows for this PDF, delete any
+            # existing ones for the same pdf_id (reprocessing behavior)
+            try:
+                db_cleanup = SessionLocal()
+                db_cleanup.query(PDFMarkdownPage).filter(PDFMarkdownPage.pdf_id == pdf_id).delete()
+                db_cleanup.commit()
+            except Exception:
+                logger.exception("Failed to clear existing markdown rows for pdf_id=%s", pdf_id)
+            finally:
+                try:
+                    db_cleanup.close()
+                except Exception:
+                    pass
+
             all_texts = []
             page_numbers = []  # Store page numbers for each text chunk
+            markdown_by_page: List[tuple[int, str]] = []
             
             # Process each page
             for i, page in enumerate(doc):
@@ -128,16 +187,19 @@ class PDFProcessor:
                     if text.strip():
                         all_texts.append(text)
                         page_numbers.append(i + 1)  # Store page numbers
+                        markdown_by_page.append((i + 1, text.strip()))
                     
                     # Update progress
                     progress = (i + 1) / len(doc) * 50  # First 50% is PDF parsing
                     pdf_doc.progress = progress
                     PROCESSING_STATUS[filename] = {
                         "progress": progress,
-                        "status": "Parsing PDF",
-                        "page_current": i + 1
+                        "status": f"Parsing PDF ({i + 1}/{total_pages})",
+                        "page_current": i + 1,
+                        "page_total": total_pages,
                     }
                     db.commit()
+                    await self._emit_status(filename)
                     
                     logger.info(
                         f"Processing PDF page {i+1}/{len(doc)}, progress {progress:.2f}%"
@@ -159,8 +221,10 @@ class PDFProcessor:
                     "progress": pdf_doc.progress,
                     "status": "Running OCR",
                     "page_current": 0,
+                    "page_total": total_pages,
                 }
                 db.commit()
+                await self._emit_status(filename)
 
                 ocr_texts: List[str] = []
                 ocr_pages: List[int] = []
@@ -190,16 +254,19 @@ class PDFProcessor:
                     pdf_doc.progress = min(progress, 70)
                     PROCESSING_STATUS[filename] = {
                         "progress": pdf_doc.progress,
-                        "status": "Running OCR",
+                        "status": f"Running OCR ({page_index + 1}/{total_pages})",
                         "page_current": page_index + 1,
+                        "page_total": total_pages,
                     }
                     db.commit()
+                    await self._emit_status(filename)
                     await asyncio.sleep(0.05)
 
                 if ocr_texts:
                     all_texts = ocr_texts
                     page_numbers = ocr_pages
                     joined_text = "\n".join(all_texts)
+                    markdown_by_page = list(zip(ocr_pages, (chunk.strip() for chunk in ocr_texts)))
                     logger.info(
                         "OCR fallback recovered text for %s (pages with content: %s)",
                         filename,
@@ -216,15 +283,22 @@ class PDFProcessor:
                     PROCESSING_STATUS[filename] = {
                         "progress": pdf_doc.progress,
                         "status": "Blacklisted",
+                        "page_current": page_index + 1,
+                        "page_total": total_pages,
                     }
                     db.commit()
+                    await self._emit_status(filename)
+                    self._clear_broadcast_marker(filename)
                     return False
                 
             chunks = self.text_splitter.split_text(joined_text)
             pdf_doc.chunks_count = len(chunks)
             PROCESSING_STATUS[filename]["status"] = "Generating embeddings"
+            PROCESSING_STATUS[filename]["page_current"] = total_pages
+            PROCESSING_STATUS[filename]["page_total"] = total_pages
             db.commit()
             logger.info(f"Text split into {len(chunks)} chunks")
+            await self._emit_status(filename)
             
             if not chunks:
                 error_msg = "Text split into chunks but no content"
@@ -232,6 +306,8 @@ class PDFProcessor:
                 pdf_doc.error = error_msg
                 pdf_doc.processing = False
                 db.commit()
+                await self._emit_status(filename)
+                self._clear_broadcast_marker(filename)
                 return False
             
             # Generate embeddings - this is a compute-intensive task
@@ -244,6 +320,7 @@ class PDFProcessor:
             PROCESSING_STATUS[filename]["progress"] = 75
             PROCESSING_STATUS[filename]["status"] = "Storing in vector database"
             db.commit()
+            await self._emit_status(filename)
             
             # Store to vector database
             logger.info("Starting to store to vector database")
@@ -275,6 +352,26 @@ class PDFProcessor:
             if metadatas:
                 logger.info(f"Metadata example: {metadatas[0]}")
             
+            # Persist per-page markdown for the processed document
+            if markdown_by_page:
+                try:
+                    markdown_rows = [
+                        PDFMarkdownPage(pdf_id=pdf_id, page=page_num, markdown=content)
+                        for page_num, content in markdown_by_page
+                        if content
+                    ]
+                    if markdown_rows:
+                        db.bulk_save_objects(markdown_rows)
+                        db.commit()
+                        logger.info(
+                            "Persisted %s markdown pages for %s",
+                            len(markdown_rows),
+                            filename,
+                        )
+                except Exception:  # noqa: BLE001
+                    logger.exception("Failed to persist markdown pages for pdf_id=%s", pdf_id)
+                    db.rollback()
+
             # Add to vector database
             storage_success = self.vector_store.add_documents(
                 chunks, embeddings, metadatas
@@ -287,6 +384,8 @@ class PDFProcessor:
                 pdf_doc.processing = False
                 PROCESSING_STATUS[filename]["status"] = f"Error: {error_msg}"
                 db.commit()
+                await self._emit_status(filename)
+                self._clear_broadcast_marker(filename)
                 return False
             
             # Complete
@@ -295,8 +394,12 @@ class PDFProcessor:
             pdf_doc.processing = False
             PROCESSING_STATUS[filename]["progress"] = 100
             PROCESSING_STATUS[filename]["status"] = "Completed"
+            PROCESSING_STATUS[filename]["page_current"] = total_pages
+            PROCESSING_STATUS[filename]["page_total"] = total_pages
             db.commit()
             logger.info(f"PDF processing completed: {filename}")
+            await self._emit_status(filename)
+            self._clear_broadcast_marker(filename)
             
             return True
             
@@ -311,6 +414,8 @@ class PDFProcessor:
             pdf_doc.processing = False
             PROCESSING_STATUS[filename]["status"] = f"Error: {str(e)}"
             db.commit()
+            await self._emit_status(filename)
+            self._clear_broadcast_marker(filename)
             return False
         finally:
             db.close()

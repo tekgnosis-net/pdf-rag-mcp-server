@@ -84,6 +84,23 @@ class PDFDocument(Base):
     blacklist_reason = Column(String, nullable=True)
 
 
+class PDFMarkdownPage(Base):
+    """Stores rendered markdown for each page of a processed PDF.
+
+    This allows fast retrieval of page-level markdown by pdf_id without
+    opening the PDF or re-running OCR on demand.
+    """
+
+    __tablename__ = "pdf_markdown_pages"
+
+    id = Column(Integer, primary_key=True, index=True)
+    pdf_id = Column(Integer, index=True)
+    page = Column(Integer, index=True)
+    markdown = Column(String)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
+
 # Create database tables
 Base.metadata.create_all(bind=engine)
 
@@ -106,6 +123,9 @@ def _ensure_schema():
 
 
 _ensure_schema()
+
+# Ensure new tables are created when the module loads (covers new installs)
+Base.metadata.create_all(bind=engine)
 
 
 def get_db():

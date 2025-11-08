@@ -7,9 +7,11 @@ import {
   Tooltip,  
   Badge  
 } from '@chakra-ui/react';  
-
-const ProgressBar = ({ progress = 0, status = "Processing..." }) => {  
-  const value = Math.max(0, Math.min(100, progress));  
+ 
+const ProgressBar = ({ progress = 0, status = "Processing...", pageCurrent = null, pageTotal = null }) => {  
+  const numericProgress = Number.isFinite(progress) ? progress : Number(progress) || 0;  
+  const value = Math.max(0, Math.min(100, numericProgress));  
+  const showPageInfo = Number.isFinite(pageCurrent) && Number.isFinite(pageTotal) && pageTotal > 0;  
   
   // Set progress bar color  
   const colorScheme = useMemo(() => {  
@@ -26,21 +28,33 @@ const ProgressBar = ({ progress = 0, status = "Processing..." }) => {
     return status;  
   }, [status]);  
 
+  const displayPercent = useMemo(() => {  
+    if (value >= 10) return Math.round(value).toString();  
+    if (value >= 1) return value.toFixed(1);  
+    return value.toFixed(2);  
+  }, [value]);  
+ 
   return (  
     <Box width="100%">  
       <HStack mb={1} justify="space-between">  
         {status && (  
           <Tooltip label={statusText}>  
             <Badge colorScheme={colorScheme} fontSize="xs">  
-              {statusText.length > 20 ? `${statusText.substring(0, 20)}...` : statusText}  
+              {statusText.length > 28 ? `${statusText.substring(0, 28)}...` : statusText}  
             </Badge>  
           </Tooltip>  
         )}  
         
         <Text fontSize="xs" fontWeight="medium" ml="auto">  
-          {Math.round(value)}%  
+          {displayPercent}%  
         </Text>  
       </HStack>  
+
+      {showPageInfo && (  
+        <Text fontSize="xs" color="gray.500" mb={1}>  
+          Page {Math.min(pageCurrent, pageTotal)} of {pageTotal}  
+        </Text>  
+      )}
       
       <Progress   
         value={value}   
@@ -53,5 +67,5 @@ const ProgressBar = ({ progress = 0, status = "Processing..." }) => {
     </Box>  
   );  
 };  
-
+ 
 export default ProgressBar;

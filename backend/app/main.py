@@ -9,6 +9,7 @@ import io
 import logging
 import os
 import uuid
+import datetime as dt
 from difflib import SequenceMatcher
 from contextlib import asynccontextmanager
 
@@ -33,7 +34,7 @@ from sentence_transformers import SentenceTransformer
 from sqlalchemy.orm import Session
 
 # Local application/library imports
-from app.database import PDFDocument, SessionLocal, get_db
+from app.database import PDFDocument, PDFMarkdownPage, SessionLocal, get_db
 from app.pdf_processor import PDFProcessor, PROCESSING_STATUS
 from app.pdf_watcher import PDFDirectoryWatcher
 from app.vector_store import VectorStore
@@ -392,6 +393,14 @@ async def delete_document(doc_id: int, db: Session = Depends(get_db)):
     vector_store.delete(filter={"pdf_id": doc_id})
     logger.info(f"Deleted entries with document ID {doc_id} from vector database")
     
+    # Delete persisted markdown pages for this document
+    try:
+        db.query(PDFMarkdownPage).filter(PDFMarkdownPage.pdf_id == doc_id).delete()
+        db.commit()
+        logger.info(f"Deleted persisted markdown pages for document ID {doc_id}")
+    except Exception:
+        logger.exception("Failed to delete markdown pages for document ID %s", doc_id)
+
     # Delete record from database
     db.delete(doc)
     db.commit()
@@ -484,7 +493,7 @@ async def query_knowledge_base(query: str):
             "content": doc,
             "page": page_num,
             "relevance": float(1 - distance),  # Convert distance to relevance score
-            "file_id": pdf_id,
+            "pdf_id": pdf_id,
             "filename": "Unknown document"
         }
         
@@ -503,6 +512,161 @@ async def query_knowledge_base(query: str):
         "query": query,
         "results": formatted_results
     }
+
+
+@app.get("/api/documents/{pdf_id}/markdown")
+async def get_document_markdown_by_id(
+    pdf_id: int,
+    start_page: int = 1,
+    max_pages: int | None = None,
+    max_characters: int | None = None,
+    db: Session = Depends(get_db),
+):
+    """Return persisted markdown for a PDF by pdf_id. If not present, fall back to on-demand render."""
+    doc = db.query(PDFDocument).filter(PDFDocument.id == pdf_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    if doc.blacklisted:
+        raise HTTPException(status_code=409, detail="Document is blacklisted")
+
+    rows = db.query(PDFMarkdownPage).filter(PDFMarkdownPage.pdf_id == pdf_id).order_by(PDFMarkdownPage.page).all()
+    if not rows:
+        # Fall back to on-demand renderer which expects a title
+        return _render_document_markdown(title=doc.filename, start_page=start_page, max_pages=max_pages, max_characters=max_characters)
+
+    # Use persisted pages to compose the response, respecting paging and character budgets
+    total_pages = len(rows)
+    if start_page < 1 or start_page > total_pages:
+        raise HTTPException(status_code=400, detail="Invalid start_page")
+
+    last_page_allowed = total_pages
+    if max_pages is not None:
+        last_page_allowed = min(total_pages, start_page + max_pages - 1)
+
+    page_sections = []
+    characters_consumed = 0
+    processed_pages = 0
+    last_page_rendered = start_page - 1
+    truncated_by_budget = False
+
+    for p in rows[start_page - 1:last_page_allowed]:
+        section_markdown = f"## Page {p.page}\n\n{p.markdown}\n"
+
+        if max_characters is not None:
+            remaining_budget = max_characters - characters_consumed
+            if remaining_budget <= 0:
+                truncated_by_budget = True
+                break
+            if len(section_markdown) > remaining_budget:
+                if not page_sections:
+                    raise HTTPException(status_code=400, detail="max_characters is too restrictive to include a single page")
+                truncated_by_budget = True
+                break
+
+        page_sections.append(section_markdown)
+        characters_consumed += len(section_markdown)
+        processed_pages += 1
+        last_page_rendered = p.page
+
+        if max_characters is not None and characters_consumed >= max_characters:
+            truncated_by_budget = True
+            break
+
+    has_more = last_page_rendered < total_pages or truncated_by_budget
+
+    markdown_header = f"# {doc.filename}\n"
+    page_window_line = f"_Pages {start_page}-{last_page_rendered} of {total_pages}_\n\n"
+    markdown_output = markdown_header + page_window_line + "".join(page_sections)
+
+    return {
+        "id": doc.id,
+        "filename": doc.filename,
+        "markdown": markdown_output,
+        "page_start": start_page,
+        "page_end": last_page_rendered,
+        "total_pages": total_pages,
+        "pages_returned": processed_pages,
+        "has_more": has_more,
+        "next_page": last_page_rendered + 1 if has_more and last_page_rendered < total_pages else None,
+        "truncated_by_characters": truncated_by_budget,
+    }
+
+
+@app.get("/api/blacklist")
+async def list_blacklist(db: Session = Depends(get_db)):
+    """List blacklisted documents."""
+    docs = db.query(PDFDocument).filter(PDFDocument.blacklisted == True).all()
+    return [
+        {
+            "id": d.id,
+            "filename": d.filename,
+            "blacklisted_at": d.blacklisted_at,
+            "blacklist_reason": d.blacklist_reason,
+        }
+        for d in docs
+    ]
+
+
+@app.post("/api/blacklist")
+async def add_blacklist(entry: dict, db: Session = Depends(get_db)):
+    """Add or update a blacklist entry.
+
+    Body can be {"doc_id": int} or {"filename": str, "reason": str}
+    """
+    doc_id = entry.get("doc_id")
+    filename = entry.get("filename")
+    reason = entry.get("reason")
+
+    if doc_id:
+        doc = db.query(PDFDocument).filter(PDFDocument.id == doc_id).first()
+        if not doc:
+            raise HTTPException(status_code=404, detail="Document not found")
+        doc.blacklisted = True
+        doc.blacklisted_at = dt.datetime.utcnow()
+        doc.blacklist_reason = reason
+        doc.processing = False
+        db.commit()
+        return {"id": doc.id, "filename": doc.filename}
+
+    if filename:
+        existing = db.query(PDFDocument).filter(PDFDocument.filename == filename).first()
+        if existing:
+            existing.blacklisted = True
+            existing.blacklisted_at = dt.datetime.utcnow()
+            existing.blacklist_reason = reason
+            existing.processing = False
+            db.commit()
+            return {"id": existing.id, "filename": existing.filename}
+        # Create a placeholder record for the blacklist
+        new_doc = PDFDocument(
+            filename=filename,
+            file_path="",
+            file_size=0,
+            processed=False,
+            processing=False,
+            blacklisted=True,
+            blacklisted_at=dt.datetime.utcnow(),
+            blacklist_reason=reason,
+        )
+        db.add(new_doc)
+        db.commit()
+        db.refresh(new_doc)
+        return {"id": new_doc.id, "filename": new_doc.filename}
+
+    raise HTTPException(status_code=400, detail="Must provide doc_id or filename")
+
+
+@app.delete("/api/blacklist/{doc_id}")
+async def remove_blacklist(doc_id: int, db: Session = Depends(get_db)):
+    """Remove a document from the blacklist (un-blacklist)."""
+    doc = db.query(PDFDocument).filter(PDFDocument.id == doc_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    doc.blacklisted = False
+    doc.blacklisted_at = None
+    doc.blacklist_reason = None
+    db.commit()
+    return {"id": doc.id, "filename": doc.filename, "blacklisted": False}
 
 
 def _render_document_markdown(
