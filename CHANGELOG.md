@@ -1,3 +1,10 @@
+## [1.2.1](https://github.com/tekgnosis-net/pdf-rag-mcp-server/compare/v1.2.0...v1.2.1) (2025-11-08)
+
+
+### Bug Fixes
+
+* **vector-store:** recover from corrupted chroma state ([caa1600](https://github.com/tekgnosis-net/pdf-rag-mcp-server/commit/caa1600ca94383bf6970fac6805123a2e9bec7ad))
+
 # [1.2.0](https://github.com/tekgnosis-net/pdf-rag-mcp-server/compare/v1.1.0...v1.2.0) (2025-11-08)
 
 
