@@ -7,13 +7,19 @@ This module provides a vector database interface for storing and retrieving vect
 import logging
 import os
 import shutil
+import time
+import uuid
 from typing import Any, Dict, List, Optional
 
 # Third-party library imports
 import chromadb
 import numpy as np
-from chromadb.config import Settings
 from chromadb.errors import InternalError
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from sentence_transformers import SentenceTransformer
+
+# Local application/library imports
+from app.database import PDFDocument, PDFMarkdownPage, SessionLocal
 
 # Configure logging
 logging.basicConfig(
@@ -49,6 +55,8 @@ class VectorStore:
         # Ensure directory exists
         os.makedirs(persist_directory, exist_ok=True)
 
+        need_rebuild = False
+
         try:
             self._initialize_collection()
         except InternalError as exc:
@@ -62,20 +70,31 @@ class VectorStore:
                 try:
                     self._initialize_collection()
                     logger.info("Vector store recovered after collection reset")
-                    return
+                    need_rebuild = True
                 except InternalError as exc_retry:
                     logger.error("Reinitialization after collection reset failed: %s", exc_retry)
                     exc = exc_retry
 
-            logger.warning(
-                "Resetting persisted vector store at %s due to repeated Chroma internal errors",
-                self.persist_directory,
-            )
-            self._wipe_persistence()
-            self._initialize_collection()
+            if not recovered:
+                logger.warning(
+                    "Resetting persisted vector store at %s due to repeated Chroma internal errors",
+                    self.persist_directory,
+                )
+                self._wipe_persistence()
+                need_rebuild = True
+                self._initialize_collection()
         except Exception as exc:  # noqa: BLE001
             logger.error("Error connecting to vector database: %s", exc)
             raise
+
+        if need_rebuild:
+            try:
+                self.rebuild_from_markdown()
+            except Exception as exc:  # noqa: BLE001
+                logger.error("Failed to rebuild vector store from markdown: %s", exc)
+                import traceback
+
+                logger.error(traceback.format_exc())
 
     def _initialize_collection(self):
         """Create or reload the Chroma client and ensure the collection is available."""
@@ -106,6 +125,130 @@ class VectorStore:
             logger.warning("Failed to remove persisted vector store at %s: %s", self.persist_directory, exc)
         finally:
             os.makedirs(self.persist_directory, exist_ok=True)
+
+    def rebuild_from_markdown(self):
+        """Rehydrate the vector store using persisted markdown pages."""
+        if self.collection.count() > 0:
+            logger.info("Vector store already contains data; skipping markdown-driven rebuild")
+            return
+
+        db = SessionLocal()
+        try:
+            processed_docs = (
+                db.query(PDFDocument)
+                .filter(PDFDocument.processed == True)  # noqa: E712
+                .order_by(PDFDocument.id)
+                .all()
+            )
+
+            if not processed_docs:
+                logger.info("No processed documents found; nothing to rebuild")
+                return
+
+            text_splitter = RecursiveCharacterTextSplitter(
+                chunk_size=1000,
+                chunk_overlap=200,
+                length_function=len,
+            )
+
+            requested_device = os.getenv("SENTENCE_TRANSFORMERS_DEVICE", "cpu")
+            logger.info(
+                "Rebuild using SentenceTransformer on device '%s'",
+                requested_device,
+            )
+
+            try:
+                model = SentenceTransformer("all-MiniLM-L6-v2", device=requested_device)
+            except Exception as exc:  # noqa: BLE001
+                if requested_device.lower() != "cpu":
+                    logger.warning(
+                        "Falling back to CPU for SentenceTransformer due to error on '%s': %s",
+                        requested_device,
+                        exc,
+                    )
+                    model = SentenceTransformer("all-MiniLM-L6-v2", device="cpu")
+                else:
+                    raise
+
+            rebuilt_any = False
+            for doc in processed_docs:
+                if doc.blacklisted:
+                    logger.info(
+                        "Skipping blacklisted document during rebuild: %s (id=%s)",
+                        doc.filename,
+                        doc.id,
+                    )
+                    continue
+
+                pages = (
+                    db.query(PDFMarkdownPage)
+                    .filter(PDFMarkdownPage.pdf_id == doc.id)
+                    .order_by(PDFMarkdownPage.page)
+                    .all()
+                )
+
+                if not pages:
+                    logger.warning(
+                        "No markdown pages stored for document %s (id=%s); skipping",
+                        doc.filename,
+                        doc.id,
+                    )
+                    continue
+
+                doc_chunks: List[str] = []
+                metadatas: List[Dict[str, Any]] = []
+                batch_id = f"rebuild-{uuid.uuid4().hex[:8]}"
+                chunk_counter = 0
+
+                for page in pages:
+                    page_text = (page.markdown or "").strip()
+                    if not page_text:
+                        continue
+
+                    page_chunks = text_splitter.split_text(page_text)
+                    for idx, chunk in enumerate(page_chunks):
+                        doc_chunks.append(chunk)
+                        metadatas.append({
+                            "source": doc.filename,
+                            "chunk_id": f"{batch_id}_{chunk_counter}",
+                            "pdf_id": doc.id,
+                            "page": page.page,
+                            "batch": batch_id,
+                            "index": chunk_counter,
+                            "length": len(chunk),
+                            "timestamp": time.time(),
+                        })
+                        chunk_counter += 1
+
+                if not doc_chunks:
+                    logger.warning(
+                        "Document %s (id=%s) produced no chunks during rebuild; skipping",
+                        doc.filename,
+                        doc.id,
+                    )
+                    continue
+
+                logger.info(
+                    "Rebuilding %s chunks for document %s (id=%s)",
+                    len(doc_chunks),
+                    doc.filename,
+                    doc.id,
+                )
+
+                embeddings = model.encode(doc_chunks)
+                success = self.add_documents(doc_chunks, embeddings, metadatas)
+                if success:
+                    rebuilt_any = True
+                    logger.info("Successfully rebuilt embeddings for %s", doc.filename)
+                else:
+                    logger.error("Failed to add rebuilt chunks for %s", doc.filename)
+
+            if rebuilt_any:
+                logger.info("Vector store rebuild from markdown completed")
+            else:
+                logger.warning("Vector store rebuild did not add any documents")
+        finally:
+            db.close()
     
     def add_documents(
         self, 
