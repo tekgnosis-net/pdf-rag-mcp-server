@@ -51,6 +51,7 @@ A powerful document knowledge base system that leverages PDF processing, vector 
   - [Docker Deployment](#docker-deployment)
     - [Environment Configuration](#environment-configuration)
     - [Running with Docker Compose](#running-with-docker-compose)
+    - [Choosing a Vector Database Backend](#choosing-a-vector-database-backend)
   - [Usage](#usage)
     - [Uploading Documents](#uploading-documents)
     - [Searching Documents](#searching-documents)
@@ -280,12 +281,14 @@ Create a `.env` file (you can copy `.env.sample`) to tune ports, volume paths, a
 | `PDF_RAG_IMAGE` | `ghcr.io/tekgnosis-net/pdf-rag-mcp-server:latest` | Image reference pulled by Docker Compose |
 | `PDF_RAG_UPLOADS` | `./data/uploads` | Host path for persisted uploaded PDFs |
 | `PDF_RAG_CHROMA_DB` | `./data/chroma_db` | Host path for the Chroma vector database |
+| `PDF_RAG_LANCE_DB` | `./data/lance_db` | Host path for the LanceDB vector database |
 | `PDF_RAG_MODEL_CACHE` | `./data/model_cache` | Host path for the sentence-transformers model cache |
 | `PDF_RAG_WATCH_DIR` | `/app/auto_ingest` | Path inside the container monitored by the watcher |
 | `PDF_RAG_WATCH_VOLUME` | `./data/auto_ingest` | Host path mounted into the watcher directory |
 | `PDF_RAG_WATCH_INTERVAL` | `5` | Poll interval (seconds) between directory scans |
 | `PDF_RAG_WATCH_MAX_WORKERS` | `1` | Maximum concurrent processing tasks spawned by the watcher |
 | `SENTENCE_TRANSFORMERS_DEVICE` | `cpu` | Set to `cuda` to use GPU embeddings when available |
+| `PDF_RAG_VECTOR_BACKEND` | `lance` | Vector backend to use (`lance` default, set to `chroma` to opt back in) |
 | `SENTENCE_TRANSFORMERS_CACHE` | `/home/appuser/.cache/torch/sentence_transformers` | Override the cache location inside the container |
 
 ### Running with Docker Compose
@@ -303,6 +306,15 @@ After the stack boots:
 - Persisted data lives in the `./data` folder (or the paths you configured)
 
 To build a bespoke image (for example, to change the embedded user/group IDs), clone the repo and run `docker build` with the `PUID` and `PGID` build args. You can then point `PDF_RAG_IMAGE` at your custom tag.
+
+### Choosing a Vector Database Backend
+
+The project supports two embedded vector databases:
+
+- **LanceDB (default)** – leave `PDF_RAG_VECTOR_BACKEND` unset (or set it to `lance`) to use the Arrow-backed Lance store with data persisted under `PDF_RAG_LANCE_DB`.
+- **Chroma** – set `PDF_RAG_VECTOR_BACKEND=chroma` to use the Chroma store. Data lives under `PDF_RAG_CHROMA_DB`.
+
+Both backends share the same ingestion code paths and metadata schema. When a backend initialises without vector data, it repopulates embeddings from the cached markdown pages in a background thread. Rebuilds skip PDFs whose on-disk files changed since their markdown snapshot, so only unchanged documents are restored without re-reading the PDFs.
 
 ## Usage
 

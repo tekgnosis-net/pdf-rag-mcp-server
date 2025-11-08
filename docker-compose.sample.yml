@@ -16,6 +16,7 @@ services:
       - ${PDF_RAG_DB_VOLUME:-./data/sqlite}:${PDF_RAG_DB_MOUNT_DIR:-/app/backend/sqlite}
       - ${PDF_RAG_UPLOADS:-./data/uploads}:/app/backend/uploads
       - ${PDF_RAG_CHROMA_DB:-./data/chroma_db}:/app/backend/chroma_db
+      - ${PDF_RAG_LANCE_DB:-./data/lance_db}:/app/backend/lance_db
       - ${PDF_RAG_MODEL_CACHE:-./data/model_cache}:/home/appuser/.cache/torch/sentence_transformers
       - ${PDF_RAG_WATCH_VOLUME:-./data/auto_ingest}:${PDF_RAG_WATCH_DIR:-/app/auto_ingest}
     restart: unless-stopped

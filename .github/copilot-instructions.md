@@ -33,8 +33,8 @@
 - **Processing status**: Progress is tracked via the module-level `PROCESSING_STATUS` dict in `backend/app/pdf_processor.py`; WebSocket clients expect `{"type": "processing_update", "filename", "status"}` payloads, so preserve that contract.
 - **Chunking pipeline**: `PDFProcessor` uses PyMuPDF for extraction and LangChain's `RecursiveCharacterTextSplitter` (1 000/200 overlap). Coordinate changes with chunk metadata assumptions in `VectorStore` and query formatting.
 - **Embedding model**: Both `PDFProcessor` and `/query` reuse the singleton `SentenceTransformer("all-MiniLM-L6-v2")`; avoid re-instantiating it inside request handlers to prevent GPU/CPU thrash.
-- **Chunk metadata**: Metadata written to Chroma includes `pdf_id`, `chunk_id`, `page`, and `batch`; downstream code (query responses, deletions) relies on these keys, so extend rather than replace them.
-- **Vector maintenance**: `backend/app/vector_store.py` wraps a persistent Chroma client stored under `backend/chroma_db`; use its `add_documents`, `delete`, and `reset` helpers instead of calling Chroma directly.
+- **Chunk metadata**: Metadata stored in the vector backends includes `pdf_id`, `chunk_id`, `page`, and `batch`; downstream code (query responses, deletions) relies on these keys, so extend rather than replace them.
+- **Vector maintenance**: `backend/app/vector_store.py` fronts pluggable backends (`PDF_RAG_VECTOR_BACKEND`), defaulting to LanceDB (`backend/lance_db`) with Chroma (`backend/chroma_db`) still available. Always use the facade helpers (`add_documents`, `delete`, `reset`, `ensure_async_rebuild`) instead of talking to backend clients directly; both backends rebuild from cached markdown in a background thread when the store is empty.
 - **Database**: SQLite lives at `backend/pdf_knowledge_base.db`; session helpers come from `get_db()` in `database.py`. Remember to close sessions when writing new background utilities.
 - **Deletion logic**: `/api/documents/{id}` cleans up files, vector entries, and DB rows; replicate its filtering logic if you add batch-delete features so partial-processing assets are removed.
 - **Static serving**: The backend serves from `backend/app/static`; `vite.config.js` sets `base: '/static/'`, so production builds must land in that folder structure (index + nested `static/assets`).
@@ -47,7 +47,7 @@
 - **Frontend API usage**: Components use Axios with relative paths (e.g., `/api/upload` in `FileUpload.jsx`, `/api/documents` in `Dashboard.jsx`); align backend route signatures with these expectations or update both sides together.
 - **UI conventions**: Chakra UI drives layout; keep new components within `frontend/src/components` and wire them through `Dashboard` or `PDFView` using the existing context providers.
 - **Search UX**: The navigation now includes a dedicated Search page (`/search`) that calls `/api/search`; backend pagination parameters (`limit`, `offset`) must stay in sync with the MCP `/query` endpoint.
-- **Storage hygiene**: Large artifacts accumulate in `uploads/` and `backend/chroma_db/`; `backend/tests/test_query.py --reset` invokes `VectorStore.reset()` for clean test runs.
+- **Storage hygiene**: Large artifacts accumulate in `uploads/`, `backend/lance_db/`, and `backend/chroma_db/`; `backend/tests/test_query.py --reset` invokes `VectorStore.reset()` for clean test runs.
 - **Diagnostics**: Logging is already configured in `pdf_processor` and `vector_store`; prefer `logger.info`/`logger.error` over prints when extending backend workflows to keep messages consistent across async tasks.
 - **Testing utility**: `python backend/tests/test_query.py --query` exercises vector searches; other flags (`--list`, `--process`, `--reset`) help validate ingestion without hitting the HTTP API.
 - **When adding features**: Mirror new REST routes with accompanying WebSocket or MCP hooks if they affect long-running tasks, and document any new background events so front-end consumers can subscribe safely.

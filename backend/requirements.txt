@@ -6,6 +6,9 @@ PyMuPDF
 langchain==0.0.353
 sentence-transformers
 chromadb
+lancedb
+pyarrow
+pandas
 python-multipart
 aiofiles
 fastapi-mcp
