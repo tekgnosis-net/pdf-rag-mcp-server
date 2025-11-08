@@ -1,3 +1,10 @@
+# [1.1.0](https://github.com/tekgnosis-net/pdf-rag-mcp-server/compare/v1.0.0...v1.1.0) (2025-11-08)
+
+
+### Features
+
+* **settings:** add blacklist management UI ([8aa1216](https://github.com/tekgnosis-net/pdf-rag-mcp-server/commit/8aa1216a747c062eb8e9a0955f542b249f5bd2d9))
+
 # 1.0.0 (2025-11-08)
 
 
