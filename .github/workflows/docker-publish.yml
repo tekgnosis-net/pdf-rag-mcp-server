@@ -1,11 +1,14 @@
 name: Publish Docker Image
 
 on:
-  push:
-    branches:
-      - master
-      - main
+  release:
+    types:
+      - published
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Version tag to publish (e.g. v1.2.3 or 1.2.3)"
+        required: true
 
 env:
   REGISTRY: ghcr.io
@@ -21,6 +24,24 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Resolve release version
+        id: release
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "release" ]; then
+            tag="${{ github.event.release.tag_name }}"
+          else
+            tag="${{ github.event.inputs.version }}"
+          fi
+          tag="${tag#refs/tags/}"
+          if [ -z "$tag" ]; then
+            echo "::error::Unable to determine release tag" >&2
+            exit 1
+          fi
+          version="${tag#v}"
+          echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
+          echo "RELEASE_VERSION=$version" >> "$GITHUB_ENV"
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -41,7 +62,8 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=${{ env.RELEASE_TAG }}
+            type=raw,value=latest
             type=sha
 
       - name: Build and push image
@@ -55,3 +77,4 @@ jobs:
           build-args: |
             PUID=1000
             PGID=1000
+            APP_VERSION=${{ env.RELEASE_VERSION }}

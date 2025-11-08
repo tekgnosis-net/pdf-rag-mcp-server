@@ -1,4 +1,28 @@
 # PDF RAG MCP Server – Agent Guide
+
+## General guidelines (Not to be changed)
+
+- **Response style**: End every reply with a concise summary covering completed work and next steps or current status.
+- **Editing**: Keep indentation, formatting, and ASCII-only text unless non-ASCII already exists and is justified. Make sure indentation is consistent (spaces vs tabs) as per the context as well.
+- **Change tracking**: Document structural, dependency, and workflow updates here; perform work on feature branches rather than directly on `main`.
+- **Workflow vigilance**: If CI/CD or automation files change, monitor subsequent runs and surface failures quickly.
+- **Branch etiquette**: Maintain feature branches per change; never revert user edits unless explicitly requested.
+- **UI baseline**: Display the running build/version near the primary title as Version: 1.0.0 as example(pulling from an env-driven constant such as `VITE_APP_VERSION`) and include a footer with `© {currentYear} Tekgnosis Pty Ltd`, computing the year at runtime so it stays current.
+- **Docker build args**: Plumb an `APP_VERSION` build arg/ENV through container builds so the frontend/banner and metadata stay synchronized with release tags.
+- **Runtime parity**: When merging frontend rewrites, ensure Dockerfile entrypoints, runtime scripts, and dependency sets are updated in the same change so published images launch the new stack.
+- **Python environment**: Ensure all Python code is compatible with Python 3.11+ and leverages type hints where appropriate. Use virtual environments for local development to manage dependencies effectively.
+- **Workflows**: Ensure github workflows are monitored after changes to catch any issues early. Use gh to check workflow statuses regularly.
+- **Copilot instructions file**: Treat this document as living release notes for contributors—whenever code, dependencies, or workflows change, review the diff and update this file with the new expectations before you finish the task. Never push this file to github main branch but keep it in feature branches for reference. Always maintain it locally for developer guidance.
+
+## Release & versioning (Not to be changed)
+
+- **Semantic-release**: Releases are computed by `.github/workflows/release.yml` using semantic-release; keep commit messages Conventional (`feat`, `fix`, etc.) so versioning stays accurate.
+- **Version sync**: `scripts/update-version.cjs` runs during the semantic-release `prepare` step to update `package.json` and `package-lock.json`; the Docker build arg `APP_VERSION` propagates the same value into runtime assets.
+- **Artifacts**: Successful releases publish GitHub releases, append to `CHANGELOG.md`, and tag GHCR images with both the computed SemVer (from the release tag) and `latest` via `.github/workflows/docker-publish.yml`.
+- **Pipeline alignment**: The release workflow runs on Node 20—match that locally when testing semantic-release, and ensure Docker builds include the `APP_VERSION` build arg so UI banners and metadata remain in sync.
+- **Commit hygiene**: Format commit messages as Conventional Commits (`feat`, `fix`, `chore`, etc.) to ensure correct version bumps.
+
+
 - **Instruction upkeep**: When you touch the codebase, reassess these guidelines and update them so they continue to reflect current behaviour and testing expectations.
 - **Architecture**: `backend/app/main.py` hosts the FastAPI REST API, background processing, WebSocket broadcasting, and mounts an MCP-specific FastAPI (`mcp_app`) for Model Context Protocol clients.
 - **HTTP API**: Primary routes live in `backend/app/main.py`; `/api/upload` queues background processing, `/api/documents` surfaces status, `/api/documents/{id}` and `DELETE` manage lifecycle.

@@ -1,7 +1,11 @@
 # syntax=docker/dockerfile:1
 
+ARG APP_VERSION=0.0.0
+
 # --- Frontend build stage ----------------------------------------------------
 FROM node:20 AS frontend-builder
+ARG APP_VERSION
+ENV VITE_APP_VERSION=$APP_VERSION
 WORKDIR /app/frontend
 
 COPY frontend/package*.json ./
@@ -17,8 +21,10 @@ RUN npm run build
 
 # --- Backend runtime stage ---------------------------------------------------
 FROM python:3.11-slim
+ARG APP_VERSION
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
+ENV APP_VERSION=$APP_VERSION
 
 WORKDIR /app
 
@@ -31,7 +37,7 @@ RUN apt-get update \
          libgl1 \
          tesseract-ocr \
     && curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin sh \
-     && apt-get purge -y --auto-remove curl \
+     #&& apt-get purge -y --auto-remove curl \
      && rm -rf /var/lib/apt/lists/*
 
 COPY backend/requirements.txt ./backend/requirements.txt
