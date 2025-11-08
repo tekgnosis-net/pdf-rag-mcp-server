@@ -1,3 +1,10 @@
+# [1.5.0](https://github.com/tekgnosis-net/pdf-rag-mcp-server/compare/v1.4.0...v1.5.0) (2025-11-08)
+
+
+### Features
+
+* enhance semantic search responses and mcp docs ([0065130](https://github.com/tekgnosis-net/pdf-rag-mcp-server/commit/0065130bb9dff724d987573f729edb069474f6f8))
+
 # [1.4.0](https://github.com/tekgnosis-net/pdf-rag-mcp-server/compare/v1.3.0...v1.4.0) (2025-11-08)
 
 
