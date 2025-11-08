@@ -10,13 +10,6 @@
 >
 > I've built upon that foundation to enhance functionality, improve usability, and integrate modern practices so the project continues to serve the community effectively.
 >
-> **Highlights of the enhancements include:**
->
-> - A more robust Docker setup for reproducible deployments
-> - Enhanced WebSocket handling for reliable real-time updates
-> - Automatic directory ingestion for seamless document management
-> - Updated dependency management with uv for faster installs and better reproducibility
->
 > These improvements make it easier to start with large collections of PDF specification documents while keeping the codebase maintainable and production-friendly.
 
 </div>
