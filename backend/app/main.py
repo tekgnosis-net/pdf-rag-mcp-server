@@ -12,6 +12,7 @@ import uuid
 import datetime as dt
 from difflib import SequenceMatcher
 from contextlib import asynccontextmanager
+from typing import Optional
 
 # Third-party library imports
 import fitz  # PyMuPDF
@@ -462,6 +463,16 @@ def _format_vector_search_results(query: str, limit: int, offset: int):
     documents = results.get("documents", [[]])[0]
     metadatas = results.get("metadatas", [[]])[0]
     distances = results.get("distances", [[]])[0]
+    raw_scores = results.get("scores", [[]])
+    score_candidates = list(raw_scores[0]) if raw_scores else []
+    scores: list[Optional[float]] = []
+    for value in score_candidates:
+        try:
+            scores.append(float(value))
+        except (TypeError, ValueError):
+            scores.append(None)
+    if len(scores) < len(documents):
+        scores.extend([None] * (len(documents) - len(scores)))
     has_more = bool(results.get("has_more"))
 
     logger.info(
@@ -474,7 +485,9 @@ def _format_vector_search_results(query: str, limit: int, offset: int):
     db = SessionLocal()
 
     try:
-        for doc, meta, distance in zip(documents, metadatas, distances):
+        for index, doc in enumerate(documents):
+            meta = metadatas[index] if index < len(metadatas) else {}
+            distance = distances[index] if index < len(distances) else None
             pdf_id = meta.get("pdf_id")
             page_num = meta.get("page")
 
@@ -490,10 +503,23 @@ def _format_vector_search_results(query: str, limit: int, offset: int):
                 logger.debug("Skipping blacklisted document %s (pdf_id=%s)", filename, pdf_id)
                 continue
 
+            score_value = None
+            candidate_score = scores[index] if index < len(scores) else None
+            if isinstance(candidate_score, (int, float)):
+                score_value = float(candidate_score)
+            elif distance is not None:
+                try:
+                    score_value = 1.0 - float(distance)
+                except (TypeError, ValueError):
+                    score_value = None
+
+            if score_value is not None:
+                score_value = max(0.0, min(1.0, score_value))
+
             result_item = {
                 "content": doc,
                 "page": page_num,
-                "relevance": float(1 - distance) if distance is not None else None,
+                "relevance": score_value,
                 "pdf_id": pdf_id,
                 "filename": filename,
             }
@@ -525,13 +551,45 @@ async def search_documents(
     return payload
 
 
-@mcp_app.get("/query")
+@mcp_app.get(
+    "/query",
+    summary="Semantic vector search",
+)
 async def query_knowledge_base(
-    query: str,
-    limit: int = Query(5, ge=1, le=50),
-    offset: int = Query(0, ge=0),
+    query: str = Query(
+        ..., description="Natural language prompt to embed and search across processed PDF chunks.", min_length=1
+    ),
+    limit: int = Query(
+        5,
+        ge=1,
+        le=50,
+        description="Maximum number of ranked chunks to return. Adjust this to match the caller's token budget.",
+    ),
+    offset: int = Query(
+        0,
+        ge=0,
+        description="Number of leading matches to skip. Reuse the same query string when advancing the offset.",
+    ),
 ):
-    """Query the knowledge base via MCP with paging support."""
+    """Run a similarity search designed for MCP-aware assistants.
+
+    The handler embeds the `query` text with the shared SentenceTransformer model and executes a nearest-neighbour
+    lookup over all ingested PDF chunks. It mirrors the `/api/search` payload while adding structure that is
+    convenient for LLM tools:
+
+    - `results`: ordered matches with `content`, `page`, `filename`, `pdf_id`, and a normalized `relevance` score.
+    - `limit` and `offset`: consumed paging parameters so the agent can reason about the window it received.
+    - `has_more` and `next_offset`: indicators for when additional pages of results are available.
+
+    Recommended flow for AI clients:
+
+    1. Issue an initial call with a conservative `limit` to avoid exceeding the model's context window.
+    2. When `has_more` is true, call the endpoint again with `offset` set to the provided `next_offset`.
+    3. Use the returned `pdf_id` and `page` values to request grounded excerpts via `/documents/markdown`.
+
+    Returns:
+        JSON payload ready for LLM consumption, enabling ranked retrieval with provenance metadata and incremental paging.
+    """
     payload = _format_vector_search_results(query, limit, offset)
     return payload
 
@@ -856,14 +914,46 @@ def _render_document_markdown(
         db.close()
 
 
-@mcp_app.get("/documents/markdown")
+@mcp_app.get(
+    "/documents/markdown",
+    summary="Render processed PDF markdown",
+)
 async def get_document_markdown(
-    title: str,
-    start_page: int = 1,
-    max_pages: int | None = None,
-    max_characters: int | None = None,
+    title: str = Query(
+        ..., description="Exact filename of the processed PDF (case-sensitive).", min_length=1
+    ),
+    start_page: int = Query(
+        1,
+        ge=1,
+        description="First page (1-indexed) to render from the cached markdown snapshot.",
+    ),
+    max_pages: int | None = Query(
+        None,
+        ge=1,
+        description="Optional limit on the number of consecutive pages to include in this response.",
+    ),
+    max_characters: int | None = Query(
+        None,
+        ge=1,
+        description="Optional character budget for the returned markdown block.",
+    ),
 ):
-    """Return PDF content rendered as Markdown with optional paging limits."""
+    """Deliver cached markdown slices to MCP clients for grounded responses.
+
+    Whenever possible the renderer uses markdown stored during ingestion so the output is consistent and quick
+    to produce. If a cached snapshot is unavailable the system falls back to an on-demand conversion of the
+    PDF using the same formatting logic.
+
+    Suggested LLM tooling workflow:
+
+    1. Call `/query` to locate relevant chunks and note their `pdf_id` and `page` fields.
+    2. Provide the matching `title` here and align `start_page` with the desired page reference.
+    3. Use `max_pages` or `max_characters` to bound the excerpt to the remaining context allowance.
+
+    The JSON response includes provenance (`filename`, `page_start`, `page_end`), the assembled markdown body,
+    and pagination hints (`has_more`, `next_page`, `truncated_by_characters`) so the client can stream additional
+    sections as needed.
+    """
     return _render_document_markdown(
         title=title,
         start_page=start_page,

@@ -139,21 +139,34 @@ class LanceVectorBackend(BaseVectorBackend):
 
             documents = df["text"].tolist()
             metadatas = df["metadata"].tolist()
-            distances = df.get("score") or df.get("distance")
-            if distances is None:
-                distances = [0.0 for _ in documents]
+
+            scores_series = df["score"] if "score" in df.columns else None
+            distance_series = df["distance"] if "distance" in df.columns else None
+
+            if scores_series is not None:
+                scores_all = [float(max(0.0, min(1.0, value))) for value in scores_series.tolist()]
+            elif distance_series is not None:
+                distance_values = [float(value) for value in distance_series.tolist()]
+                scores_all = [max(0.0, min(1.0, 1.0 - value)) for value in distance_values]
             else:
-                distances = distances.tolist()
+                scores_all = [0.0 for _ in documents]
+
+            if distance_series is not None:
+                distances_all = [max(0.0, float(value)) for value in distance_series.tolist()]
+            else:
+                distances_all = [max(0.0, 1.0 - score) for score in scores_all]
 
             window_docs = documents[offset_val : offset_val + requested] if requested > 0 else []
             window_meta = metadatas[offset_val : offset_val + requested] if requested > 0 else []
-            window_dist = distances[offset_val : offset_val + requested] if requested > 0 else []
+            window_dist = distances_all[offset_val : offset_val + requested] if requested > 0 else []
+            window_scores = scores_all[offset_val : offset_val + requested] if requested > 0 else []
             has_more = len(documents) > offset_val + requested
 
             return {
                 "documents": [window_docs],
                 "metadatas": [window_meta],
                 "distances": [window_dist],
+                "scores": [window_scores],
                 "has_more": has_more,
                 "offset": offset_val,
                 "limit": requested,

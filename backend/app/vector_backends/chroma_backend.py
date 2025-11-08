@@ -194,6 +194,9 @@ class ChromaVectorBackend(BaseVectorBackend):
             docs_primary = documents_all[0] if documents_all else []
             metas_primary = metadatas_all[0] if metadatas_all else []
             dist_primary = distances_all[0] if distances_all else []
+            scores_primary = [
+                max(0.0, min(1.0, 1.0 - float(distance))) for distance in dist_primary
+            ]
 
             window_start = offset_val
             window_end = offset_val + requested if requested > 0 else offset_val
@@ -201,6 +204,7 @@ class ChromaVectorBackend(BaseVectorBackend):
             window_docs = docs_primary[window_start:window_end] if requested > 0 else []
             window_meta = metas_primary[window_start:window_end] if requested > 0 else []
             window_dist = dist_primary[window_start:window_end] if requested > 0 else []
+            window_scores = scores_primary[window_start:window_end] if requested > 0 else []
 
             has_more = len(docs_primary) > window_end
 
@@ -208,6 +212,7 @@ class ChromaVectorBackend(BaseVectorBackend):
                 "documents": [window_docs],
                 "metadatas": [window_meta],
                 "distances": [window_dist],
+                "scores": [window_scores],
                 "has_more": has_more,
                 "offset": offset_val,
                 "limit": requested,

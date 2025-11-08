@@ -3,7 +3,6 @@ import {
   Badge,
   Box,
   Button,
-  ButtonGroup,
   Flex,
   Heading,
   HStack,
@@ -24,7 +23,7 @@ import {
   useDisclosure,
   useToast,
 } from '@chakra-ui/react';
-import { FiBookOpen, FiChevronLeft, FiChevronRight, FiSearch } from 'react-icons/fi';
+import { FiBookOpen, FiSearch } from 'react-icons/fi';
 import ReactMarkdown from 'react-markdown';
 import { fetchDocumentMarkdown, searchDocuments } from '../api/documents';
 
@@ -38,24 +37,19 @@ const clampLimit = (value) => {
 const Search = () => {
   const [query, setQuery] = useState('');
   const [limit, setLimit] = useState(10);
-  const [offset, setOffset] = useState(0);
-  const [history, setHistory] = useState([0]);
   const [results, setResults] = useState([]);
-  const [hasMore, setHasMore] = useState(false);
-  const [nextOffset, setNextOffset] = useState(null);
   const [isSearching, setIsSearching] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
   const [selectedResult, setSelectedResult] = useState(null);
   const [markdownContent, setMarkdownContent] = useState('');
   const [loadingMarkdown, setLoadingMarkdown] = useState(false);
+  const [requestedLimit, setRequestedLimit] = useState(limit);
 
   const toast = useToast();
   const { isOpen, onOpen, onClose } = useDisclosure();
 
-  const currentPage = history.length || 1;
-
   const executeSearch = useCallback(
-    async (targetOffset = 0, { resetHistory = false } = {}) => {
+    async () => {
       const trimmed = query.trim();
       if (!trimmed) {
         toast({
@@ -67,14 +61,9 @@ const Search = () => {
 
       setIsSearching(true);
       try {
-        const payload = await searchDocuments({ query: trimmed, limit, offset: targetOffset });
+        const payload = await searchDocuments({ query: trimmed, limit });
         setResults(payload.results || []);
-        setOffset(payload.offset ?? targetOffset);
-        setHasMore(Boolean(payload.has_more));
-        setNextOffset(payload.next_offset ?? null);
-        if (resetHistory) {
-          setHistory([targetOffset]);
-        }
+        setRequestedLimit(payload.limit ?? limit);
         setHasSearched(true);
       } catch (err) {
         console.error('Search failed', err);
@@ -91,25 +80,7 @@ const Search = () => {
   );
 
   const handleSubmit = () => {
-    executeSearch(0, { resetHistory: true });
-  };
-
-  const handleNext = () => {
-    if (nextOffset == null) {
-      return;
-    }
-    setHistory((prev) => [...prev, nextOffset]);
-    executeSearch(nextOffset);
-  };
-
-  const handlePrev = () => {
-    if (history.length <= 1) {
-      return;
-    }
-    const updated = history.slice(0, -1);
-    const target = updated[updated.length - 1];
-    setHistory(updated);
-    executeSearch(target);
+    executeSearch();
   };
 
   const handleViewMarkdown = async (result) => {
@@ -180,9 +151,9 @@ const Search = () => {
             />
           </Box>
 
-          <Box w={{ base: '100%', md: '140px' }}>
+          <Box w={{ base: '100%', md: '160px' }}>
             <Text fontSize="sm" fontWeight="medium" mb={1}>
-              Results per page
+              Number of results
             </Text>
             <NumberInput
               min={1}
@@ -222,19 +193,9 @@ const Search = () => {
           </Box>
         ) : (
           <Stack spacing={4}>
-            <Flex justify="space-between" align="center">
-              <Text fontSize="sm" color="gray.600">
-                Showing {results.length} result{results.length === 1 ? '' : 's'} (page {currentPage})
-              </Text>
-              <ButtonGroup variant="outline" size="sm" spacing={2}>
-                <Button leftIcon={<FiChevronLeft />} onClick={handlePrev} isDisabled={history.length <= 1}>
-                  Previous
-                </Button>
-                <Button rightIcon={<FiChevronRight />} onClick={handleNext} isDisabled={!hasMore || nextOffset == null}>
-                  Next
-                </Button>
-              </ButtonGroup>
-            </Flex>
+            <Text fontSize="sm" color="gray.600">
+              Showing {results.length} result{results.length === 1 ? '' : 's'} (max {requestedLimit})
+            </Text>
 
             <Stack spacing={4}>
               {results.map((result, index) => {
@@ -249,7 +210,7 @@ const Search = () => {
                     <Stack spacing={2}>
                       <Flex justify="space-between" align={{ base: 'flex-start', md: 'center' }} direction={{ base: 'column', md: 'row' }}>
                         <HStack spacing={3} mb={{ base: 2, md: 0 }}>
-                          <Badge colorScheme="blue">#{offset + index + 1}</Badge>
+                          <Badge colorScheme="blue">#{index + 1}</Badge>
                           <Text fontWeight="semibold">{result?.filename || 'Unknown document'}</Text>
                         </HStack>
                         <HStack spacing={3}>
@@ -278,20 +239,6 @@ const Search = () => {
                 );
               })}
             </Stack>
-
-            <Flex justify="space-between" align="center" pt={2}>
-              <Text fontSize="sm" color="gray.600">
-                Offset {offset}
-              </Text>
-              <ButtonGroup variant="outline" size="sm" spacing={2}>
-                <Button leftIcon={<FiChevronLeft />} onClick={handlePrev} isDisabled={history.length <= 1}>
-                  Previous
-                </Button>
-                <Button rightIcon={<FiChevronRight />} onClick={handleNext} isDisabled={!hasMore || nextOffset == null}>
-                  Next
-                </Button>
-              </ButtonGroup>
-            </Flex>
           </Stack>
         )}
       </Box>
