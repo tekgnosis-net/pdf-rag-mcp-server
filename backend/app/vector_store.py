@@ -182,10 +182,11 @@ class VectorStore:
             return False
     
     def search(
-        self, 
-        query_embedding: np.ndarray, 
+        self,
+        query_embedding: np.ndarray,
         n_results: int = 5,
-        filter_criteria: Optional[Dict[str, Any]] = None
+        filter_criteria: Optional[Dict[str, Any]] = None,
+        offset: int = 0,
     ):
         """Search for relevant documents in the vector database.
         
@@ -198,11 +199,23 @@ class VectorStore:
             Dict: Dictionary containing search results.
         """
         try:
-            logger.info(f"Executing vector search, requested result count: {n_results}")
-            
+            requested = max(int(n_results) if n_results is not None else 0, 0)
+            offset_val = max(int(offset) if offset is not None else 0, 0)
+
+            fetch_total = requested + offset_val + 1
+            if fetch_total <= 0:
+                fetch_total = 1
+
+            logger.info(
+                "Executing vector search, requested=%s, offset=%s, fetch_total=%s",
+                requested,
+                offset_val,
+                fetch_total,
+            )
+
             query_params = {
                 "query_embeddings": [query_embedding.tolist()],
-                "n_results": n_results
+                "n_results": fetch_total,
             }
             
             if filter_criteria:
@@ -223,14 +236,42 @@ class VectorStore:
                 }
                 
             results = self.collection.query(**query_params)
-            
-            # Record search results
-            doc_count = len(results.get("documents", [[]])[0])
-            logger.info(f"Search completed, found {doc_count} results")
-            if doc_count > 0:
-                logger.info(f"First result preview: {results['documents'][0][0][:100]}...")
-            
-            return results
+
+            documents_all = results.get("documents", [[]])
+            metadatas_all = results.get("metadatas", [[]])
+            distances_all = results.get("distances", [[]])
+
+            docs_primary = documents_all[0] if documents_all else []
+            metas_primary = metadatas_all[0] if metadatas_all else []
+            dist_primary = distances_all[0] if distances_all else []
+
+            window_start = offset_val
+            window_end = offset_val + requested if requested > 0 else offset_val
+
+            window_docs = docs_primary[window_start:window_end] if requested > 0 else []
+            window_meta = metas_primary[window_start:window_end] if requested > 0 else []
+            window_dist = dist_primary[window_start:window_end] if requested > 0 else []
+
+            has_more = len(docs_primary) > window_end
+
+            logger.info(
+                "Search completed, total_fetched=%s, window_size=%s, has_more=%s",
+                len(docs_primary),
+                len(window_docs),
+                has_more,
+            )
+            if window_docs:
+                logger.info("First window result preview: %s...", window_docs[0][:100])
+
+            return {
+                "documents": [window_docs],
+                "metadatas": [window_meta],
+                "distances": [window_dist],
+                "has_more": has_more,
+                "offset": offset_val,
+                "limit": requested,
+                "total_fetched": len(docs_primary),
+            }
         except Exception as e:
             logger.error(f"Error executing vector search: {str(e)}")
             import traceback

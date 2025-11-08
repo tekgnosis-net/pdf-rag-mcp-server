@@ -15,3 +15,9 @@ export const fetchDocumentMarkdown = async ({ id, start_page = 1, max_pages = nu
   });
   return response.data;
 };
+
+export const searchDocuments = async ({ query, limit = 10, offset = 0 }) => {
+  const params = { q: query, limit, offset };
+  const response = await axios.get('/api/search', { params });
+  return response.data;
+};

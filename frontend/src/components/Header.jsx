@@ -12,7 +12,7 @@ import {
   MenuList,
 } from '@chakra-ui/react';  
 import { Link as RouterLink } from 'react-router-dom';  
-import { FiHome, FiBook, FiGithub, FiMenu } from 'react-icons/fi';  
+import { FiHome, FiBook, FiGithub, FiMenu, FiSearch } from 'react-icons/fi';  
 
 const Header = () => {  
   return (  
@@ -35,6 +35,9 @@ const Header = () => {
               <MenuItem as={RouterLink} to="/" icon={<FiHome />}>
                 Home
               </MenuItem>
+              <MenuItem as={RouterLink} to="/search" icon={<FiSearch />}>
+                Search
+              </MenuItem>
               <MenuItem as={RouterLink} to="/settings" icon={<FiBook />}>
                 Settings
               </MenuItem>
@@ -51,6 +54,16 @@ const Header = () => {
             >  
               Home  
             </Button>   
+            <Button
+              as={RouterLink}
+              to="/search"
+              variant="ghost"
+              colorScheme="whiteAlpha"
+              leftIcon={<FiSearch />}
+              size="sm"
+            >
+              Search
+            </Button>
             <Button
               as={RouterLink}
               to="/settings"

@@ -22,6 +22,7 @@ from fastapi import (
     FastAPI,
     File,
     HTTPException,
+    Query,
     UploadFile,
     WebSocket,
     WebSocketDisconnect,
@@ -433,85 +434,106 @@ async def websocket_endpoint(websocket: WebSocket):
         manager.disconnect(websocket)
 
 
-@mcp_app.get("/query")
-async def query_knowledge_base(query: str):
-    """Query Knowledge Base
-    
-    Query the knowledge vector database.
-    
-    Args:
-        query: The search query string.
-        
-    Returns:
-        Dictionary containing the query results.
-    """
-    request_id = str(uuid.uuid4())
-    logger.info(f"Received query request: {query}")
-    
-    # Record vector database size
+def _format_vector_search_results(query: str, limit: int, offset: int):
+    """Execute a vector search and return formatted results with paging metadata."""
+    if not query or not query.strip():
+        raise HTTPException(status_code=400, detail="Query string must be provided")
+
+    limit_sanitized = max(1, min(int(limit or 1), 50))
+    offset_sanitized = max(0, int(offset or 0))
+
+    logger.info(
+        "Vector search request received: query='%s', limit=%s, offset=%s",
+        query,
+        limit_sanitized,
+        offset_sanitized,
+    )
+
     doc_count = vector_store.get_document_count()
-    logger.info(f"Current vector database document count: {doc_count}")
-    
-    # Generate query embedding and search
+    logger.info("Current vector database document count: %s", doc_count)
+
     query_embedding = embedding_model.encode(query)
-    results = vector_store.search(query_embedding, n_results=5)
-    
-    # Extract results
+    results = vector_store.search(
+        query_embedding,
+        n_results=limit_sanitized,
+        offset=offset_sanitized,
+    )
+
     documents = results.get("documents", [[]])[0]
     metadatas = results.get("metadatas", [[]])[0]
     distances = results.get("distances", [[]])[0]
+    has_more = bool(results.get("has_more"))
 
+    logger.info(
+        "Query '%s' retrieved %s documents (window size)",
+        query,
+        len(documents),
+    )
+
+    formatted_results: list[dict[str, object]] = []
     db = SessionLocal()
-    
-    # Log query result count
-    logger.info(f"Query '{query}' found {len(documents)} results")
-    
-    # Handle no results case
-    if not documents:
-        logger.warning(f"Query '{query}' found no results")
-        
-        # Check if is_mcp_request variable exists before using it
-        if 'is_mcp_request' in locals() and is_mcp_request:
-            return {
-                "jsonrpc": "2.0",
-                "result": {
-                    "content": "No information related to your question was found. Please try using different keywords for your query."
-                },
-                "id": request_id
+
+    try:
+        for doc, meta, distance in zip(documents, metadatas, distances):
+            pdf_id = meta.get("pdf_id")
+            page_num = meta.get("page")
+
+            filename = "Unknown document"
+            blacklisted = False
+            if pdf_id:
+                pdf_doc = db.query(PDFDocument).filter(PDFDocument.id == pdf_id).first()
+                if pdf_doc:
+                    filename = pdf_doc.filename
+                    blacklisted = pdf_doc.blacklisted
+
+            if blacklisted:
+                logger.debug("Skipping blacklisted document %s (pdf_id=%s)", filename, pdf_id)
+                continue
+
+            result_item = {
+                "content": doc,
+                "page": page_num,
+                "relevance": float(1 - distance) if distance is not None else None,
+                "pdf_id": pdf_id,
+                "filename": filename,
             }
-        else:
-            return {"query": query, "results": []}
-    
-    # Process results, including document name and page information
-    formatted_results = []
-    
-    for doc, meta, distance in zip(documents, metadatas, distances):
-        pdf_id = meta.get("pdf_id")
-        page_num = meta.get("page", "Unknown page")
-        
-        result_item = {
-            "content": doc,
-            "page": page_num,
-            "relevance": float(1 - distance),  # Convert distance to relevance score
-            "pdf_id": pdf_id,
-            "filename": "Unknown document"
-        }
-        
-        # Get document name from database
-        if pdf_id:
-            pdf_doc = db.query(PDFDocument).filter(PDFDocument.id == pdf_id).first()
-            if pdf_doc:
-                result_item["filename"] = pdf_doc.filename
-        
-        formatted_results.append(result_item)
-    
-    db.close()
-    logger.info(f"Returning {len(formatted_results)} formatted results")
-    
+            formatted_results.append(result_item)
+    finally:
+        db.close()
+
+    consumed = len(documents)
+    next_offset = offset_sanitized + consumed if has_more and consumed > 0 else None
+
     return {
         "query": query,
-        "results": formatted_results
+        "results": formatted_results,
+        "limit": limit_sanitized,
+        "offset": offset_sanitized,
+        "has_more": has_more,
+        "next_offset": next_offset,
     }
+
+
+@app.get("/api/search")
+async def search_documents(
+    q: str = Query(..., min_length=1, description="Search string to query"),
+    limit: int = Query(10, ge=1, le=50, description="Maximum number of results to return"),
+    offset: int = Query(0, ge=0, description="Offset into the full result set"),
+):
+    """HTTP endpoint for searching the knowledge base with pagination."""
+    payload = _format_vector_search_results(q, limit, offset)
+    return payload
+
+
+@mcp_app.get("/query")
+async def query_knowledge_base(
+    query: str,
+    limit: int = Query(5, ge=1, le=50),
+    offset: int = Query(0, ge=0),
+):
+    """Query the knowledge base via MCP with paging support."""
+    payload = _format_vector_search_results(query, limit, offset)
+    return payload
 
 
 @app.get("/api/documents/{pdf_id}/markdown")

@@ -38,6 +38,7 @@ A powerful document knowledge base system that leverages PDF processing, vector 
 - **Automatic Directory Ingestion**: Watches a mounted folder and processes new or updated PDFs without manual uploads
 - **Markdown Export**: Render any processed PDF as Markdown via MCP or the dashboard for quick reading and copy/paste
 - **Blacklist Controls**: Dedicated Settings page to add or remove filenames that should be skipped during ingestion
+- **Interactive Search Console**: Dedicated search page with pagination and markdown previews for matching chunks
 
 ## System Architecture
 
@@ -272,6 +273,16 @@ Select **Settings** in the navigation bar to review and manage the blacklist. Yo
 - See when an item was blacklisted and why. The backend stores this information in the database so it persists across restarts.
 
 If a PDF fails OCR or contains no readable text, the processor automatically blacklists it and records the reason here so you can triage the issue later.
+
+### Searching the Knowledge Base
+
+Click **Search** in the navigation bar to query embeddings directly from the UI. The page lets you:
+
+- Tune the result limit per page and page forward/backward through matches;
+- Inspect similarity scores and page numbers for every hit;
+- Open the rendered markdown for a result in one click, starting from the matched page.
+
+The same pagination parameters (`limit`, `offset`) are now supported by the MCP `/query` endpoint, so automation clients can stream result pages just like the browser UI.
 
 ### MCP Integration with Cursor
 

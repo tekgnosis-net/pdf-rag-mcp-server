@@ -4,6 +4,7 @@ import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import Header from './components/Header';  
 import Dashboard from './pages/Dashboard';  
 import PDFView from './pages/PDFView';
+import Search from './pages/Search';
 import Settings from './pages/Settings';
 import { WebSocketProvider } from './context/WebSocketContext';  
 
@@ -17,6 +18,7 @@ function App() {
             <Container maxW="container.xl" py={{ base: 6, md: 10 }} px={{ base: 4, md: 8 }}>  
               <Routes>  
                 <Route path="/" element={<Dashboard />} />  
+                <Route path="/search" element={<Search />} />
                 <Route path="/pdf/:id" element={<PDFView />} />
                 <Route path="/settings" element={<Settings />} />
               </Routes>  
