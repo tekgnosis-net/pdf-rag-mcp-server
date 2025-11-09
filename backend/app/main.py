@@ -157,6 +157,7 @@ def _queue_reprocess(
     doc: PDFDocument,
     background_tasks: BackgroundTasks,
     reset_status: bool = True,
+    defer_processing: bool = False,
 ) -> tuple[bool, str | None]:
     """Reset document state and enqueue background processing."""
 
@@ -179,9 +180,114 @@ def _queue_reprocess(
     doc.chunks_count = 0
     doc.error = None
 
-    PROCESSING_STATUS[doc.filename] = {"progress": 0.0, "status": "Queued"}
-    background_tasks.add_task(_process_pdf_background, doc.id, doc.file_path, doc.filename)
+    PROCESSING_STATUS[doc.filename] = {
+        "progress": 0.0,
+        "status": "Queued",
+        "page_current": 0,
+        "page_total": 0,
+    }
+
+    if not defer_processing:
+        background_tasks.add_task(
+            _process_pdf_background,
+            doc.id,
+            doc.file_path,
+            doc.filename,
+        )
     return True, None
+
+
+async def _broadcast_processing_update(
+    filename: str,
+    *,
+    status: str,
+    progress: float | None = None,
+    page_current: int | None = None,
+    page_total: int | None = None,
+):
+    state = PROCESSING_STATUS.get(
+        filename,
+        {
+            "progress": 0.0,
+            "status": status,
+            "page_current": 0,
+            "page_total": 0,
+        },
+    )
+
+    if progress is not None:
+        state["progress"] = progress
+    state["status"] = status
+    if page_current is not None:
+        state["page_current"] = page_current
+    if page_total is not None:
+        state["page_total"] = page_total
+
+    PROCESSING_STATUS[filename] = state
+    await manager.broadcast(
+        {
+            "type": "processing_update",
+            "filename": filename,
+            "status": state,
+        }
+    )
+
+
+async def _reset_and_reprocess_document(
+    pdf_id: int,
+    file_path: Optional[str],
+    filename: Optional[str],
+):
+    display_name = filename or f"pdf_id={pdf_id}"
+
+    if not file_path or not os.path.exists(file_path):
+        db = SessionLocal()
+        try:
+            doc = db.query(PDFDocument).filter(PDFDocument.id == pdf_id).first()
+            if doc:
+                doc.processing = False
+                doc.error = "Missing source file for reparse"
+                db.commit()
+        finally:
+            db.close()
+
+        await _broadcast_processing_update(display_name, status="Missing source file")
+        return
+
+    await _broadcast_processing_update(
+        display_name,
+        status="Clearing cached data",
+        progress=0.0,
+    )
+
+    db = SessionLocal()
+    try:
+        db.query(PDFMarkdownPage).filter(
+            PDFMarkdownPage.pdf_id == pdf_id
+        ).delete(synchronize_session=False)
+        db.commit()
+    except Exception:  # noqa: BLE001
+        logger.exception("Failed to clear markdown rows for pdf_id=%s", pdf_id)
+        db.rollback()
+    finally:
+        db.close()
+
+    try:
+        vector_store.delete(filter={"pdf_id": pdf_id})
+    except Exception:  # noqa: BLE001
+        logger.exception("Failed to delete vector entries for pdf_id=%s", pdf_id)
+
+    await _broadcast_processing_update(
+        display_name,
+        status="Queued",
+        progress=0.0,
+    )
+
+    await _process_pdf_background(
+        pdf_id,
+        file_path,
+        filename or display_name,
+    )
 
 # Configure CORS
 app.add_middleware(
@@ -610,12 +716,12 @@ async def query_knowledge_base(
         5,
         ge=1,
         le=50,
-        description="Maximum number of ranked chunks to return. Adjust this to match the caller's token budget.",
+        description="Maximum number of ranked chunks to return. Adjust this to match the caller's token budget. Value has to be a positive integer",
     ),
     offset: int = Query(
         0,
         ge=0,
-        description="Number of leading matches to skip. Reuse the same query string when advancing the offset.",
+        description="Number of leading matches to skip. Reuse the same query string when advancing the offset. Value has to be a non-negative integer",
     ),
 ):
     """Run a similarity search designed for MCP-aware assistants.
@@ -906,15 +1012,20 @@ async def reparse_documents(
     skipped_missing_file: list[str] = []
     skipped_processing: list[str] = []
 
-    markdown_deleted = 0
-
     for doc in sorted(matched_docs.values(), key=lambda d: (d.filename or "", d.id)):
-        markdown_deleted += db.query(PDFMarkdownPage).filter(PDFMarkdownPage.pdf_id == doc.id).delete(synchronize_session=False)
-        vector_store.delete(filter={"pdf_id": doc.id})
-
-        ok, reason = _queue_reprocess(doc, background_tasks)
         target_name = doc.filename or f"pdf_id={doc.id}"
+        ok, reason = _queue_reprocess(
+            doc,
+            background_tasks,
+            defer_processing=True,
+        )
         if ok:
+            background_tasks.add_task(
+                _reset_and_reprocess_document,
+                doc.id,
+                doc.file_path,
+                doc.filename,
+            )
             queued.append(target_name)
             continue
         if reason == "blacklisted":
@@ -935,7 +1046,7 @@ async def reparse_documents(
             "already_processing": skipped_processing,
             "not_found": missing_inputs,
         },
-        "markdown_deleted": markdown_deleted,
+        "markdown_deleted": None,
     }
 
 
@@ -1115,17 +1226,17 @@ async def get_document_markdown(
     start_page: int = Query(
         1,
         ge=1,
-        description="First page (1-indexed) to render from the cached markdown snapshot.",
+        description="First page (1-indexed) to render from the cached markdown snapshot. Value as a positive integer.",
     ),
     max_pages: int | None = Query(
         None,
         ge=1,
-        description="Optional limit on the number of consecutive pages to include in this response.",
+        description="Optional limit on the number of consecutive pages to include in this response. Value as a positive integer.",
     ),
     max_characters: int | None = Query(
         None,
         ge=1,
-        description="Optional character budget for the returned markdown block.",
+        description="Optional character budget for the returned markdown block. Value as a positive integer.",
     ),
 ):
     """Deliver cached markdown slices to MCP clients for grounded responses.

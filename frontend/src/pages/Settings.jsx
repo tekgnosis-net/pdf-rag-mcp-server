@@ -80,7 +80,7 @@ const Settings = () => {
       const summary = summarizeSkipped(skipped);
       toast({
         title: 'Reparse scheduled',
-        description: `Queued ${queued.length} document(s).${summary ? ` Skipped -> ${summary}` : ''}`,
+        description: `Queued ${queued.length} document(s).${summary ? ` Skipped -> ${summary}` : ''} Cleanup runs in the background; monitor progress from the Dashboard.`,
         status: 'success',
         duration: 6000,
       });
@@ -109,7 +109,7 @@ const Settings = () => {
       const summary = summarizeSkipped(skipped);
       toast({
         title: 'Reparse scheduled',
-        description: `Queued ${queued.length} document(s).${summary ? ` Skipped -> ${summary}` : ''}`,
+        description: `Queued ${queued.length} document(s).${summary ? ` Skipped -> ${summary}` : ''} Cleanup runs in the background; monitor progress from the Dashboard.`,
         status: 'success',
         duration: 6000,
       });
@@ -148,6 +148,9 @@ const Settings = () => {
             </HStack>
           </Box>
         </HStack>
+        <Text fontSize="xs" color="gray.500">
+          Tip: Partial matches like &quot;series-22&quot; may queue many PDFs. The cleanup now runs asynchronously—refresh the Dashboard or watch live updates over WebSocket.
+        </Text>
       </Box>
 
       <Box mb={6} p={4} bg="white" borderRadius="md" shadow="sm">
