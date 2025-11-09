@@ -78,6 +78,10 @@ A powerful document knowledge base system that leverages PDF processing, vector 
 - Settings reparse actions now defer markdown/vector cleanup to background workers, emit `processing_update` WebSocket events ("Clearing cached data", "Queued N") as progress ticks, and surface matching toasts so the UI stays responsive even when fuzzy matches enqueue dozens of PDFs.
 
 <!-- RELEASE_HIGHLIGHTS_START -->
+### v1.6.0 (2025-11-09)
+
+- **Bug Fixes**: **vector-store:** resolve lance persistence path. **vector-store:** resolve lance persistence path.
+
 ### v1.5.1 (2025-11-08)
 
 - **Changes**: harden vector rebuild model loading.
@@ -93,10 +97,6 @@ A powerful document knowledge base system that leverages PDF processing, vector 
 ### v1.3.0 (2025-11-08)
 
 - **Changes**: **vector-store:** rebuild embeddings from markdown on reset.
-
-### v1.2.1 (2025-11-08)
-
-- **Changes**: **vector-store:** recover from corrupted chroma state.
 <!-- RELEASE_HIGHLIGHTS_END -->
 
 ## System Architecture
