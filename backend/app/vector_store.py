@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 import numpy as np
@@ -13,6 +14,9 @@ from app.vector_backends.chroma_backend import ChromaVectorBackend
 from app.vector_backends.lance_backend import LanceVectorBackend
 
 logger = logging.getLogger("vector_store")
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
 
 _BACKENDS = {
     "chroma": ChromaVectorBackend,
@@ -29,11 +33,25 @@ def _select_backend_name(explicit: Optional[str] = None) -> str:
     return backend_name
 
 
+def _resolve_directory(path_value: Optional[str], default_subdir: Optional[str]) -> Optional[str]:
+    if path_value and path_value.strip():
+        candidate = Path(path_value.strip())
+    elif default_subdir:
+        candidate = Path(default_subdir)
+    else:
+        return None
+
+    if not candidate.is_absolute():
+        candidate = (_PROJECT_ROOT / candidate).resolve()
+
+    return str(candidate)
+
+
 def _persist_directory_for(backend_name: str) -> Optional[str]:
     if backend_name == "chroma":
-        return os.getenv("PDF_RAG_CHROMA_DB")
+        return _resolve_directory(os.getenv("PDF_RAG_CHROMA_DB"), "data/chroma_db")
     if backend_name == "lance":
-        return os.getenv("PDF_RAG_LANCE_DB")
+        return _resolve_directory(os.getenv("PDF_RAG_LANCE_DB"), "data/lance_db")
     return None
 
 
