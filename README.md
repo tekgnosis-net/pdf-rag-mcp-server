@@ -25,10 +25,6 @@ A powerful document knowledge base system that leverages PDF processing, vector 
   - [Table of Contents](#table-of-contents)
   - [Features](#features)
   - [Release Highlights](#release-highlights)
-    - [v1.3.0 (2025-11-08)](#v130-2025-11-08)
-    - [v1.2.1 (2025-11-08)](#v121-2025-11-08)
-    - [v1.2.0 (2025-11-08)](#v120-2025-11-08)
-    - [v1.1.0 (2025-11-08)](#v110-2025-11-08)
   - [System Architecture](#system-architecture)
   - [Automatic PDF Ingestion](#automatic-pdf-ingestion)
   - [Quick Start](#quick-start)
@@ -50,6 +46,7 @@ A powerful document knowledge base system that leverages PDF processing, vector 
     - [Searching Documents](#searching-documents)
     - [Viewing Markdown in the Dashboard](#viewing-markdown-in-the-dashboard)
     - [Managing the Blacklist](#managing-the-blacklist)
+    - [Reprocessing Documents](#reprocessing-documents)
     - [Searching the Knowledge Base](#searching-the-knowledge-base)
     - [MCP Integration with Cursor](#mcp-integration-with-cursor)
   - [MCP API Methods](#mcp-api-methods)
@@ -72,25 +69,35 @@ A powerful document knowledge base system that leverages PDF processing, vector 
 - **Markdown Export**: Render any processed PDF as Markdown via MCP or the dashboard for quick reading and copy/paste
 - **Blacklist Controls**: Dedicated Settings page to add or remove filenames that should be skipped during ingestion
 - **Interactive Search Console**: Dedicated search page with pagination and markdown previews for matching chunks
+- **Responsive Reparse Workflow**: Settings actions queue heavy cleanup in the background and stream WebSocket updates so the UI stays responsive even when fuzzy matches schedule large batches of PDFs
 
 ## Release Highlights
 
+### Unreleased
+
+- Settings reparse actions now defer markdown/vector cleanup to background workers, emit `processing_update` WebSocket events ("Clearing cached data", "Queued N") as progress ticks, and surface matching toasts so the UI stays responsive even when fuzzy matches enqueue dozens of PDFs.
+
+<!-- RELEASE_HIGHLIGHTS_START -->
+### v1.5.1 (2025-11-08)
+
+- **Changes**: harden vector rebuild model loading.
+
+### v1.5.0 (2025-11-08)
+
+- **Changes**: enhance semantic search responses and mcp docs.
+
+### v1.4.0 (2025-11-08)
+
+- **Changes**: add lance vector backend with async rebuild.
+
 ### v1.3.0 (2025-11-08)
 
-- Rebuilds Chroma embeddings from the cached markdown snapshot when resetting the vector store so large PDF collections recover instantly after maintenance jobs.
+- **Changes**: **vector-store:** rebuild embeddings from markdown on reset.
 
 ### v1.2.1 (2025-11-08)
 
-- Hardens the vector store restart path by rebuilding Chroma embeddings from the persisted markdown cache, avoiding expensive PDF reprocessing after container crashes.
-
-### v1.2.0 (2025-11-08)
-
-- Introduces the Search page (`/search`) with paginated semantic results, markdown previews, and parity `limit`/`offset` paging support in the MCP `/query` endpoint.
-- Updates the combined release workflow to always build and push Docker images (including rolling tags when no new release is cut).
-
-### v1.1.0 (2025-11-08)
-
-- Adds the Settings page for managing blacklist entries and reviewing automatically blacklisted documents.
+- **Changes**: **vector-store:** recover from corrupted chroma state.
+<!-- RELEASE_HIGHLIGHTS_END -->
 
 ## System Architecture
 
@@ -298,7 +305,7 @@ After the stack boots:
 - Connect MCP clients to `http://<host>:${MCP_PORT}/mcp/v1`
 - Persisted data lives in the `./data` folder (or the paths you configured)
 
-To build a bespoke image (for example, to change the embedded user/group IDs), clone the repo and run `docker build` with the `PUID` and `PGID` build args. You can then point `PDF_RAG_IMAGE` at your custom tag.
+To build a bespoke image (for example, to change the embedded user/group IDs), clone the repo and run `docker build` with the `PUID` and `PGID` build args. Pass `--build-arg APP_VERSION=$(node -p "require('./package.json').version")` (or your desired tag) so the UI banner remains in sync with the container image. You can then point `PDF_RAG_IMAGE` at your custom tag.
 
 ### Choosing a Vector Database Backend
 
@@ -336,6 +343,14 @@ Select **Settings** in the navigation bar to review and manage the blacklist. Yo
 - See when an item was blacklisted and why. The backend stores this information in the database so it persists across restarts.
 
 If a PDF fails OCR or contains no readable text, the processor automatically blacklists it and records the reason here so you can triage the issue later.
+
+### Reprocessing Documents
+
+The same **Settings** page provides **Reprocess All** and **Reprocess Selected** actions to refresh markdown snapshots and embeddings without shell access.
+
+- **Reprocess All** wipes cached markdown and vectors for every non-blacklisted PDF, then re-queues ingestion. Cleanup runs in background workers, so the HTTP response and UI toasts confirm scheduling immediately while WebSocket updates ("Clearing cached data", "Queued N") reflect ongoing progress.
+- **Reprocess Selected** accepts newline or comma-separated values and performs case-insensitive fuzzy matching against filenames and paths. Matches are processed one-by-one in the background to keep the UI responsive; the toast output lists queued and skipped entries so you can reconcile the results.
+- While cleanup is in flight, you can leave the page open to watch progress, or monitor `docker compose logs -f pdf-rag` for the same `processing_update` events.
 
 ### Searching the Knowledge Base
 
