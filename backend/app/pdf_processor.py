@@ -5,6 +5,7 @@ This module is responsible for parsing PDF documents, extracting text content, a
 
 # Standard library imports
 import asyncio
+import base64
 import datetime as dt
 import io
 import logging
@@ -12,7 +13,7 @@ import os
 import time
 import traceback
 import uuid
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 # Third-party library imports
 import fitz  # PyMuPDF
@@ -36,6 +37,10 @@ logger = logging.getLogger("pdf_processor")
 
 # Global variable to track processing progress
 PROCESSING_STATUS: Dict[str, Dict] = {}
+
+MAX_IMAGE_BYTES = int(os.getenv("PDF_IMAGE_MAX_BYTES", str(2 * 1024 * 1024)))
+MAX_IMAGE_PIXELS = int(os.getenv("PDF_IMAGE_MAX_PIXELS", "5000000"))
+MAX_IMAGES_PER_PAGE = int(os.getenv("PDF_IMAGE_MAX_PER_PAGE", "8"))
 
 
 class PDFProcessor:
@@ -175,19 +180,41 @@ class PDFProcessor:
                 except Exception:
                     pass
 
-            all_texts = []
+            all_texts: List[str] = []
             page_numbers = []  # Store page numbers for each text chunk
             markdown_by_page: List[tuple[int, str]] = []
+            extracted_images_total = 0
+            seen_image_refs: set[int] = set()
             
             # Process each page
             for i, page in enumerate(doc):
                 try:
+                    page_number = i + 1
                     text = page.get_text()
-                    # Only add non-empty text
-                    if text.strip():
+
+                    page_markdown_parts: List[str] = []
+
+                    if text and text.strip():
                         all_texts.append(text)
-                        page_numbers.append(i + 1)  # Store page numbers
-                        markdown_by_page.append((i + 1, text.strip()))
+                        page_numbers.append(page_number)  # Store page numbers
+                        page_markdown_parts.append(text.strip())
+
+                    images_markdown = self._extract_page_images(
+                        doc,
+                        page,
+                        page_number,
+                        seen_image_refs,
+                    )
+                    if images_markdown:
+                        extracted_images_total += len(images_markdown)
+                        page_markdown_parts.extend(images_markdown)
+                        for idx in range(len(images_markdown)):
+                            placeholder = f"[Embedded image {idx + 1} on page {page_number}]"
+                            all_texts.append(placeholder)
+                            page_numbers.append(page_number)
+
+                    if page_markdown_parts:
+                        markdown_by_page.append((page_number, "\n\n".join(page_markdown_parts)))
                     
                     # Update progress
                     progress = (i + 1) / len(doc) * 50  # First 50% is PDF parsing
@@ -297,7 +324,11 @@ class PDFProcessor:
             PROCESSING_STATUS[filename]["page_current"] = total_pages
             PROCESSING_STATUS[filename]["page_total"] = total_pages
             db.commit()
-            logger.info(f"Text split into {len(chunks)} chunks")
+            logger.info(
+                "Text split into %s chunks%s",
+                len(chunks),
+                f"; extracted {extracted_images_total} images" if extracted_images_total else ""
+            )
             await self._emit_status(filename)
             
             if not chunks:
@@ -419,6 +450,158 @@ class PDFProcessor:
             return False
         finally:
             db.close()
+
+    def _extract_page_images(
+        self,
+        document: fitz.Document,
+        page: fitz.Page,
+        page_number: int,
+        seen_image_refs: set[int],
+    ) -> List[str]:
+        """Extract images from a page and return them as markdown image tags with embedded data URIs."""
+        images_markdown: List[str] = []
+
+        for image_index, image_info in enumerate(page.get_images(full=True), start=1):
+            if MAX_IMAGES_PER_PAGE and image_index > MAX_IMAGES_PER_PAGE:
+                logger.debug(
+                    "Skipping remaining images on page %s after reaching limit %s",
+                    page_number,
+                    MAX_IMAGES_PER_PAGE,
+                )
+                break
+
+            xref = image_info[0]
+
+            if xref in seen_image_refs:
+                logger.debug(
+                    "Skipping duplicate image xref %s already captured earlier",
+                    xref,
+                )
+                continue
+            seen_image_refs.add(xref)
+
+            try:
+                image_bytes, mime_type, dimensions = self._extract_image_bytes(document, xref)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Failed to extract image %s on page %s: %s",
+                    image_index,
+                    page_number,
+                    exc,
+                )
+                continue
+
+            width, height = dimensions
+            pixel_count = width * height if width and height else 0
+
+            if pixel_count and pixel_count > MAX_IMAGE_PIXELS:
+                logger.info(
+                    "Skipping image %s on page %s – pixel count %s exceeds limit %s",
+                    image_index,
+                    page_number,
+                    pixel_count,
+                    MAX_IMAGE_PIXELS,
+                )
+                continue
+
+            if len(image_bytes) > MAX_IMAGE_BYTES:
+                logger.info(
+                    "Skipping image %s on page %s – byte size %s exceeds limit %s",
+                    image_index,
+                    page_number,
+                    len(image_bytes),
+                    MAX_IMAGE_BYTES,
+                )
+                continue
+
+            encoded = base64.b64encode(image_bytes).decode("ascii")
+            images_markdown.append(
+                f"![Page {page_number} Image {image_index}](data:{mime_type};base64,{encoded})"
+            )
+
+        return images_markdown
+
+    def _extract_image_bytes(self, document: fitz.Document, xref: int) -> Tuple[bytes, str, Tuple[int, int]]:
+        """Return raw image bytes, MIME type, and dimensions for a given xref."""
+        image_info = document.extract_image(xref)
+        image_bytes = image_info.get("image")
+        if not image_bytes:
+            raise ValueError("Image stream is empty")
+
+        ext = (image_info.get("ext") or "png").lower()
+        width = int(image_info.get("width") or 0)
+        height = int(image_info.get("height") or 0)
+        mime_type = self._extension_to_mime(ext)
+
+        smask_xref = int(image_info.get("smask") or 0)
+        if smask_xref:
+            try:
+                image_bytes, (width, height) = self._merge_image_with_mask(document, image_bytes, smask_xref)
+                mime_type = "image/png"
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Failed to merge image mask for xref %s: %s",
+                    xref,
+                    exc,
+                )
+
+        if not mime_type:
+            image_bytes, (width, height) = self._convert_image_to_png(image_bytes, fallback_size=(width, height))
+            mime_type = "image/png"
+
+        return image_bytes, mime_type, (width, height)
+
+    @staticmethod
+    def _extension_to_mime(ext: str) -> Optional[str]:
+        mapping = {
+            "png": "image/png",
+            "jpg": "image/jpeg",
+            "jpeg": "image/jpeg",
+            "webp": "image/webp",
+            "bmp": "image/bmp",
+        }
+        return mapping.get(ext.lower())
+
+    @staticmethod
+    def _convert_image_to_png(
+        image_bytes: bytes,
+        fallback_size: Tuple[int, int] | None = None,
+    ) -> Tuple[bytes, Tuple[int, int]]:
+        buffer = io.BytesIO(image_bytes)
+        with Image.open(buffer) as pil_image:
+            if pil_image.mode not in {"RGB", "RGBA"}:
+                pil_image = pil_image.convert("RGBA")
+            output = io.BytesIO()
+            pil_image.save(output, format="PNG")
+            width, height = pil_image.size
+        if not width or not height:
+            width, height = fallback_size or (0, 0)
+        return output.getvalue(), (width, height)
+
+    def _merge_image_with_mask(
+        self,
+        document: fitz.Document,
+        base_bytes: bytes,
+        mask_xref: int,
+    ) -> Tuple[bytes, Tuple[int, int]]:
+        base_pix = fitz.Pixmap(base_bytes)
+        mask_info = document.extract_image(mask_xref)
+        mask_bytes = mask_info.get("image")
+        if not mask_bytes:
+            raise ValueError("Mask stream is empty")
+
+        mask_pix = fitz.Pixmap(mask_bytes)
+        combined_pix = fitz.Pixmap(base_pix, mask_pix)
+
+        try:
+            png_bytes = combined_pix.tobytes("png")
+            dimensions = (combined_pix.width, combined_pix.height)
+        finally:
+            base_pix = None
+            mask_pix = None
+            combined_pix = None
+
+        return png_bytes, dimensions
     
     def get_processing_status(self, filename: Optional[str] = None):
         """Get processing status.

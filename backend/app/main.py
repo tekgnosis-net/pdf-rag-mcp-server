@@ -12,7 +12,7 @@ import uuid
 import datetime as dt
 from difflib import SequenceMatcher
 from contextlib import asynccontextmanager
-from typing import Optional
+from typing import Optional, Literal
 
 # Third-party library imports
 import fitz  # PyMuPDF
@@ -34,6 +34,7 @@ from fastapi_mcp import FastApiMCP
 from PIL import Image
 from sentence_transformers import SentenceTransformer
 from sqlalchemy.orm import Session
+from pydantic import BaseModel, Field
 
 # Local application/library imports
 from app.database import PDFDocument, PDFMarkdownPage, SessionLocal, get_db
@@ -135,6 +136,158 @@ logger.info(
     "Initializing application, vector database document count: %s",
     vector_store.get_document_count()
 )
+
+
+class ReparseRequest(BaseModel):
+    """Payload for triggering document reprocessing."""
+
+    mode: Literal["all", "selected"] = Field(
+        description="When set to 'all', every non-blacklisted document is reprocessed."
+    )
+    filenames: list[str] | None = Field(
+        default=None,
+        description="Exact filenames to reprocess when mode is 'selected'.",
+    )
+
+    class Config:
+        extra = "forbid"
+
+
+def _queue_reprocess(
+    doc: PDFDocument,
+    background_tasks: BackgroundTasks,
+    reset_status: bool = True,
+    defer_processing: bool = False,
+) -> tuple[bool, str | None]:
+    """Reset document state and enqueue background processing."""
+
+    if doc.blacklisted:
+        return False, "blacklisted"
+
+    if not doc.file_path or not os.path.exists(doc.file_path):
+        return False, "missing_file"
+
+    if doc.processing and doc.filename in PROCESSING_STATUS:
+        return False, "already_processing"
+
+    if reset_status:
+        PROCESSING_STATUS.pop(doc.filename, None)
+
+    doc.processed = False
+    doc.processing = True
+    doc.progress = 0.0
+    doc.page_count = 0
+    doc.chunks_count = 0
+    doc.error = None
+
+    PROCESSING_STATUS[doc.filename] = {
+        "progress": 0.0,
+        "status": "Queued",
+        "page_current": 0,
+        "page_total": 0,
+    }
+
+    if not defer_processing:
+        background_tasks.add_task(
+            _process_pdf_background,
+            doc.id,
+            doc.file_path,
+            doc.filename,
+        )
+    return True, None
+
+
+async def _broadcast_processing_update(
+    filename: str,
+    *,
+    status: str,
+    progress: float | None = None,
+    page_current: int | None = None,
+    page_total: int | None = None,
+):
+    state = PROCESSING_STATUS.get(
+        filename,
+        {
+            "progress": 0.0,
+            "status": status,
+            "page_current": 0,
+            "page_total": 0,
+        },
+    )
+
+    if progress is not None:
+        state["progress"] = progress
+    state["status"] = status
+    if page_current is not None:
+        state["page_current"] = page_current
+    if page_total is not None:
+        state["page_total"] = page_total
+
+    PROCESSING_STATUS[filename] = state
+    await manager.broadcast(
+        {
+            "type": "processing_update",
+            "filename": filename,
+            "status": state,
+        }
+    )
+
+
+async def _reset_and_reprocess_document(
+    pdf_id: int,
+    file_path: Optional[str],
+    filename: Optional[str],
+):
+    display_name = filename or f"pdf_id={pdf_id}"
+
+    if not file_path or not os.path.exists(file_path):
+        db = SessionLocal()
+        try:
+            doc = db.query(PDFDocument).filter(PDFDocument.id == pdf_id).first()
+            if doc:
+                doc.processing = False
+                doc.error = "Missing source file for reparse"
+                db.commit()
+        finally:
+            db.close()
+
+        await _broadcast_processing_update(display_name, status="Missing source file")
+        return
+
+    await _broadcast_processing_update(
+        display_name,
+        status="Clearing cached data",
+        progress=0.0,
+    )
+
+    db = SessionLocal()
+    try:
+        db.query(PDFMarkdownPage).filter(
+            PDFMarkdownPage.pdf_id == pdf_id
+        ).delete(synchronize_session=False)
+        db.commit()
+    except Exception:  # noqa: BLE001
+        logger.exception("Failed to clear markdown rows for pdf_id=%s", pdf_id)
+        db.rollback()
+    finally:
+        db.close()
+
+    try:
+        vector_store.delete(filter={"pdf_id": pdf_id})
+    except Exception:  # noqa: BLE001
+        logger.exception("Failed to delete vector entries for pdf_id=%s", pdf_id)
+
+    await _broadcast_processing_update(
+        display_name,
+        status="Queued",
+        progress=0.0,
+    )
+
+    await _process_pdf_background(
+        pdf_id,
+        file_path,
+        filename or display_name,
+    )
 
 # Configure CORS
 app.add_middleware(
@@ -563,12 +716,12 @@ async def query_knowledge_base(
         5,
         ge=1,
         le=50,
-        description="Maximum number of ranked chunks to return. Adjust this to match the caller's token budget.",
+        description="Maximum number of ranked chunks to return. Adjust this to match the caller's token budget. Value has to be a positive integer",
     ),
     offset: int = Query(
         0,
         ge=0,
-        description="Number of leading matches to skip. Reuse the same query string when advancing the offset.",
+        description="Number of leading matches to skip. Reuse the same query string when advancing the offset. Value has to be a non-negative integer",
     ),
 ):
     """Run a similarity search designed for MCP-aware assistants.
@@ -749,6 +902,154 @@ async def remove_blacklist(doc_id: int, db: Session = Depends(get_db)):
     return {"id": doc.id, "filename": doc.filename, "blacklisted": False}
 
 
+@app.post("/api/reparse")
+async def reparse_documents(
+    request: ReparseRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
+    """Clear persisted artifacts and reprocess documents on demand."""
+
+    if request.mode == "all":
+        markdown_deleted = db.query(PDFMarkdownPage).delete(synchronize_session=False)
+        db.commit()
+
+        vector_reset = vector_store.reset()
+
+        documents = db.query(PDFDocument).all()
+        queued: list[str] = []
+        skipped_blacklisted: list[str] = []
+        skipped_missing: list[str] = []
+        skipped_processing: list[str] = []
+
+        for doc in documents:
+            ok, reason = _queue_reprocess(doc, background_tasks)
+            if ok:
+                queued.append(doc.filename)
+                continue
+            if reason == "blacklisted":
+                skipped_blacklisted.append(doc.filename)
+            elif reason == "missing_file":
+                skipped_missing.append(doc.filename)
+            elif reason == "already_processing":
+                skipped_processing.append(doc.filename)
+
+        db.commit()
+
+        return {
+            "mode": "all",
+            "queued": queued,
+            "skipped": {
+                "blacklisted": skipped_blacklisted,
+                "missing_file": skipped_missing,
+                "already_processing": skipped_processing,
+            },
+            "markdown_deleted": markdown_deleted,
+            "vector_reset": vector_reset,
+        }
+
+    # Selected mode requires filenames list
+    filenames_input = request.filenames or []
+    normalized = []
+    for raw in filenames_input:
+        candidate = (raw or "").strip()
+        if candidate:
+            if candidate not in normalized:
+                normalized.append(candidate)
+
+    if not normalized:
+        raise HTTPException(status_code=400, detail="Provide at least one filename to reparse")
+
+    all_documents = db.query(PDFDocument).all()
+    matched_docs: dict[int, PDFDocument] = {}
+    missing_inputs: list[str] = []
+
+    for name in normalized:
+        needle_lower = name.lower()
+        matches: list[PDFDocument] = []
+        seen_ids: set[int] = set()
+
+        for doc in all_documents:
+            values = [doc.filename or "", doc.file_path or ""]
+            for value in values:
+                candidate = value.lower()
+                if not candidate:
+                    continue
+                if needle_lower == candidate or needle_lower in candidate:
+                    if doc.id not in seen_ids:
+                        matches.append(doc)
+                        seen_ids.add(doc.id)
+                    break
+                similarity = SequenceMatcher(None, candidate, needle_lower).ratio()
+                if similarity >= 0.7:
+                    if doc.id not in seen_ids:
+                        matches.append(doc)
+                        seen_ids.add(doc.id)
+                    break
+
+        if not matches:
+            missing_inputs.append(name)
+            continue
+
+        for doc in matches:
+            matched_docs[doc.id] = doc
+
+    if not matched_docs:
+        return {
+            "mode": "selected",
+            "queued": [],
+            "skipped": {
+                "blacklisted": [],
+                "missing_file": [],
+                "already_processing": [],
+                "not_found": missing_inputs,
+            },
+            "markdown_deleted": 0,
+        }
+
+    queued: list[str] = []
+    skipped_blacklisted: list[str] = []
+    skipped_missing_file: list[str] = []
+    skipped_processing: list[str] = []
+
+    for doc in sorted(matched_docs.values(), key=lambda d: (d.filename or "", d.id)):
+        target_name = doc.filename or f"pdf_id={doc.id}"
+        ok, reason = _queue_reprocess(
+            doc,
+            background_tasks,
+            defer_processing=True,
+        )
+        if ok:
+            background_tasks.add_task(
+                _reset_and_reprocess_document,
+                doc.id,
+                doc.file_path,
+                doc.filename,
+            )
+            queued.append(target_name)
+            continue
+        if reason == "blacklisted":
+            skipped_blacklisted.append(target_name)
+        elif reason == "missing_file":
+            skipped_missing_file.append(target_name)
+        elif reason == "already_processing":
+            skipped_processing.append(target_name)
+
+    db.commit()
+
+    return {
+        "mode": "selected",
+        "queued": queued,
+        "skipped": {
+            "blacklisted": skipped_blacklisted,
+            "missing_file": skipped_missing_file,
+            "already_processing": skipped_processing,
+            "not_found": missing_inputs,
+        },
+        "markdown_deleted": None,
+    }
+
+
 def _render_document_markdown(
     title: str,
     start_page: int = 1,
@@ -925,17 +1226,17 @@ async def get_document_markdown(
     start_page: int = Query(
         1,
         ge=1,
-        description="First page (1-indexed) to render from the cached markdown snapshot.",
+        description="First page (1-indexed) to render from the cached markdown snapshot. Value as a positive integer.",
     ),
     max_pages: int | None = Query(
         None,
         ge=1,
-        description="Optional limit on the number of consecutive pages to include in this response.",
+        description="Optional limit on the number of consecutive pages to include in this response. Value as a positive integer.",
     ),
     max_characters: int | None = Query(
         None,
         ge=1,
-        description="Optional character budget for the returned markdown block.",
+        description="Optional character budget for the returned markdown block. Value as a positive integer.",
     ),
 ):
     """Deliver cached markdown slices to MCP clients for grounded responses.
