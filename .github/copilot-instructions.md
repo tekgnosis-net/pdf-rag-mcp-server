@@ -22,7 +22,7 @@
 - **Artifacts**: Successful releases publish GitHub releases, append to `CHANGELOG.md`, and tag GHCR images with both the computed SemVer (from the release tag) and `latest` via `.github/workflows/docker-publish.yml`.
 - **Pipeline alignment**: The release workflow runs on Node 20—match that locally when testing semantic-release, and ensure Docker builds include the `APP_VERSION` build arg so UI banners and metadata remain in sync.
 - **Release docs**: If semantic-release publishes a new minor or major version (e.g. 1.2.x → 1.3.x), update the README with a short note summarizing the release highlights before you finish the task.
-- **README automation**: `.github/workflows/release.yml` calls `scripts/update-readme-release.mjs` after semantic-release to regenerate the "Release Highlights" block in `README.md`; keep the start/end markers intact and extend the script when the layout changes.
+- **README automation**: `.github/workflows/release.yml` calls `scripts/update-readme-release.mjs` after semantic-release to regenerate the "Release Highlights" block in `README.md` and commits with `[skip ci]`; keep the start/end markers intact and extend the script when the layout changes.
 - **Commit hygiene**: Format commit messages as Conventional Commits (`feat`, `fix`, `chore`, etc.) to ensure correct version bumps.
 
 
