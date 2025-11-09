@@ -1,3 +1,17 @@
+# [1.6.0](https://github.com/tekgnosis-net/pdf-rag-mcp-server/compare/v1.5.1...v1.6.0) (2025-11-09)
+
+
+### Bug Fixes
+
+* **vector-store:** resolve lance persistence path ([d4c96a5](https://github.com/tekgnosis-net/pdf-rag-mcp-server/commit/d4c96a57bc3c0d13bc8c063773f9ab28e043c0ec))
+* **vector-store:** resolve lance persistence path ([c5e6883](https://github.com/tekgnosis-net/pdf-rag-mcp-server/commit/c5e688321072a32f1ffa1f238ef0271af2a19c0e))
+
+
+### Features
+
+* defer reparse cleanup ([0b7f1d2](https://github.com/tekgnosis-net/pdf-rag-mcp-server/commit/0b7f1d2608392dd0c30e504ee2d969b05381620a))
+* enhance reparse controls and image handling ([6fdcb04](https://github.com/tekgnosis-net/pdf-rag-mcp-server/commit/6fdcb04364b92ed06c0ebc80001af412647022a0))
+
 ## [1.5.1](https://github.com/tekgnosis-net/pdf-rag-mcp-server/compare/v1.5.0...v1.5.1) (2025-11-08)
 
 
