@@ -80,23 +80,24 @@ A powerful document knowledge base system that leverages PDF processing, vector 
 <!-- RELEASE_HIGHLIGHTS_START -->
 ### v1.6.0 (2025-11-09)
 
-- **Bug Fixes**: **vector-store:** resolve lance persistence path. **vector-store:** resolve lance persistence path.
+- **Bug Fixes**: **Vector-store:** resolve lance persistence path.
+- **Features**: Defer reparse cleanup. Enhance reparse controls and image handling.
 
 ### v1.5.1 (2025-11-08)
 
-- **Changes**: harden vector rebuild model loading.
+- **Bug Fixes**: Harden vector rebuild model loading.
 
 ### v1.5.0 (2025-11-08)
 
-- **Changes**: enhance semantic search responses and mcp docs.
+- **Features**: Enhance semantic search responses and mcp docs.
 
 ### v1.4.0 (2025-11-08)
 
-- **Changes**: add lance vector backend with async rebuild.
+- **Features**: Add lance vector backend with async rebuild.
 
 ### v1.3.0 (2025-11-08)
 
-- **Changes**: **vector-store:** rebuild embeddings from markdown on reset.
+- **Features**: **Vector-store:** rebuild embeddings from markdown on reset.
 <!-- RELEASE_HIGHLIGHTS_END -->
 
 ## System Architecture

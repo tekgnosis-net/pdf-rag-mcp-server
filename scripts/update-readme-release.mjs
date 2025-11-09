@@ -17,6 +17,10 @@ const cleanItem = (raw) => {
   text = text.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
   text = text.replace(/\s*\([0-9a-f]{7,}\)$/i, '');
   text = text.replace(/\s+/g, ' ').trim();
+  const firstAlphaIndex = text.search(/[A-Za-z]/);
+  if (firstAlphaIndex >= 0) {
+    text = `${text.slice(0, firstAlphaIndex)}${text.charAt(firstAlphaIndex).toUpperCase()}${text.slice(firstAlphaIndex + 1)}`;
+  }
   if (!/[.!?]$/.test(text)) {
     text += '.';
   }
@@ -31,29 +35,42 @@ const parseChangelog = async () => {
   let match;
   while ((match = releaseRegex.exec(changelogRaw)) && releases.length < MAX_RELEASES) {
     const [, version, date, body] = match;
-    const sections = [];
+    const sectionChunks = body
+      .split(/\n(?=###\s+)/)
+      .map((chunk) => chunk.trim())
+      .filter(Boolean);
 
-    const sectionRegex = /###\s+(.+?)\s*[\r\n]+([\s\S]*?)(?=^###\s|\Z)/gm;
-    let sectionMatch;
-    while ((sectionMatch = sectionRegex.exec(body))) {
-      const [, title, sectionBody] = sectionMatch;
-      const items = sectionBody
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .filter((line) => line.startsWith('* '))
-        .map(cleanItem);
+    const sections = sectionChunks
+      .map((chunk) => {
+        const lines = chunk.split(/\r?\n/);
+        const titleLine = lines.shift();
+        const titleMatch = titleLine?.match(/^###\s+(.*)$/);
+        if (!titleMatch) {
+          return null;
+        }
 
-      if (items.length) {
-        sections.push({ title, items });
-      }
-    }
+        const items = Array.from(new Set(lines
+          .map((line) => line.trim())
+          .filter((line) => line.startsWith('* '))
+          .map(cleanItem)));
+
+        if (!items.length) {
+          return null;
+        }
+
+        return {
+          title: titleMatch[1].trim(),
+          items,
+        };
+      })
+      .filter(Boolean);
 
     if (!sections.length) {
-      const fallbackItems = body
+      const fallbackItems = Array.from(new Set(body
         .split(/\r?\n/)
         .map((line) => line.trim())
         .filter((line) => line.startsWith('* '))
-        .map(cleanItem);
+        .map(cleanItem)));
 
       if (fallbackItems.length) {
         sections.push({ title: 'Changes', items: fallbackItems });
