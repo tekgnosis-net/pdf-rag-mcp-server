@@ -1,3 +1,10 @@
+# [1.7.0](https://github.com/tekgnosis-net/pdf-rag-mcp-server/compare/v1.6.0...v1.7.0) (2025-11-10)
+
+
+### Features
+
+* surface client connection telemetry ([1554366](https://github.com/tekgnosis-net/pdf-rag-mcp-server/commit/15543663dd19a1b94accc2b0fd113256b7b945df))
+
 # [1.6.0](https://github.com/tekgnosis-net/pdf-rag-mcp-server/compare/v1.5.1...v1.6.0) (2025-11-09)
 
 
