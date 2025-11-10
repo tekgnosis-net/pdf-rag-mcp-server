@@ -46,7 +46,8 @@
 - **Local images**: Prefer `docker build -t pdf-rag-mcp-server:local .` for backend image changes, then start services with `PDF_RAG_IMAGE=pdf-rag-mcp-server:local docker compose up -d`; avoid `docker compose build` because `docker-compose.yml` lacks a build section.
 - **Combined start**: `uv run run.py` (or `python run.py`) expects pre-built static files and also launches the MCP server thread on port 7800.
 - **MCP endpoint**: `FastApiMCP` mounts `mcp_app` under `/mcp/v1`; Cursor clients typically hit `http://localhost:7800/mcp`, so keep that route stable or update docs/UI hints (see `Dashboard.jsx`).
-- **WebSockets**: `frontend/src/context/WebSocketContext.jsx` hard-codes `ws://{hostname}:8000/ws` with auto-retry to drive live progress; any new event types should follow the same `{type, ...}` envelope.
+- **WebSockets**: `frontend/src/context/WebSocketContext.jsx` hard-codes `ws://{hostname}:8000/ws` with auto-retry to drive live progress; any new event types should follow the same `{type, ...}` envelope. The dashboard expects `connection_snapshot` payloads shaped as `{generated_at, websocket_clients, mcp_sessions}` for the connection card.
+- **Connection telemetry**: `backend/app/main.py` surfaces `/api/connections` and monkey-patches `FastApiSseTransport` to track MCP SSE clients. Keep the session metadata keys (`session_id`, `client_host`, `status`, `messages_received`, timestamps) stable and update the React `connectionSnapshot` mapper if you add or rename fields.
 - **Frontend API usage**: Components use Axios with relative paths (e.g., `/api/upload` in `FileUpload.jsx`, `/api/documents` in `Dashboard.jsx`); align backend route signatures with these expectations or update both sides together.
 - **Settings UX**: `frontend/src/pages/Settings.jsx` now exposes reparse actions (all or newline/comma-delimited filenames) alongside blacklist management, surfaces asynchronous cleanup messaging in toasts, and reminds users that fuzzy matches (e.g. `series-22`) may queue many PDFs. Keep toast summaries informative (`Queued N`, `Skipped -> reason`) when adjusting response payloads.
 - **UI conventions**: Chakra UI drives layout; keep new components within `frontend/src/components` and wire them through `Dashboard` or `PDFView` using the existing context providers.
@@ -60,3 +61,4 @@
 - **Python Use**: Use python3 locally instead of python.
 - **Cleanup**: After running compiles or builds, remove generated artifacts (e.g., `__pycache__`, build outputs, locally built Docker images) unless the user explicitly asks to keep them.
 - **Committing changes**: Ensure pushing commits to master and branches.
+- **Docker validation**: Before concluding any change, build the local Docker image (`docker build -t pdf-rag-mcp-server:local .`) and report success or surface build issues so regressions are caught early.
