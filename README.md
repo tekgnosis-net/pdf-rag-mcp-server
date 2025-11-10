@@ -82,6 +82,10 @@ A powerful document knowledge base system that leverages PDF processing, vector 
 - Settings reparse actions now defer markdown/vector cleanup to background workers, emit `processing_update` WebSocket events ("Clearing cached data", "Queued N") as progress ticks, and surface matching toasts so the UI stays responsive even when fuzzy matches enqueue dozens of PDFs.
 
 <!-- RELEASE_HIGHLIGHTS_START -->
+### v1.7.2 (2025-11-10)
+
+- **Bug Fixes**: **Ci:** prevent README push when unchanged.
+
 ### v1.7.1 (2025-11-10)
 
 - **Bug Fixes**: Align vite proxy with backend port. **Ci:** allow release workflow on main and master.
@@ -98,10 +102,6 @@ A powerful document knowledge base system that leverages PDF processing, vector 
 ### v1.5.1 (2025-11-08)
 
 - **Bug Fixes**: Harden vector rebuild model loading.
-
-### v1.5.0 (2025-11-08)
-
-- **Features**: Enhance semantic search responses and mcp docs.
 <!-- RELEASE_HIGHLIGHTS_END -->
 
 ## System Architecture
