@@ -72,12 +72,20 @@ A powerful document knowledge base system that leverages PDF processing, vector 
 - **Responsive Reparse Workflow**: Settings actions queue heavy cleanup in the background and stream WebSocket updates so the UI stays responsive even when fuzzy matches schedule large batches of PDFs
 
 ## Release Highlights
+### v1.7.0 (https://github.com/tekgnosis-net/pdf-rag-mcp-server/compare/v1.6.0...v1.7.0)
+
+- **Features**
+  - surface client connection telemetry ([1554366](https://github.com/tekgnosis-net/pdf-rag-mcp-server/commit/15543663dd19a1b94accc2b0fd113256b7b945df))
 
 ### Unreleased
 
 - Settings reparse actions now defer markdown/vector cleanup to background workers, emit `processing_update` WebSocket events ("Clearing cached data", "Queued N") as progress ticks, and surface matching toasts so the UI stays responsive even when fuzzy matches enqueue dozens of PDFs.
 
 <!-- RELEASE_HIGHLIGHTS_START -->
+### v1.7.0 (2025-11-10)
+
+- **Features**: Surface client connection telemetry.
+
 ### v1.6.0 (2025-11-09)
 
 - **Bug Fixes**: **Vector-store:** resolve lance persistence path.
@@ -94,10 +102,6 @@ A powerful document knowledge base system that leverages PDF processing, vector 
 ### v1.4.0 (2025-11-08)
 
 - **Features**: Add lance vector backend with async rebuild.
-
-### v1.3.0 (2025-11-08)
-
-- **Features**: **Vector-store:** rebuild embeddings from markdown on reset.
 <!-- RELEASE_HIGHLIGHTS_END -->
 
 ## System Architecture
@@ -173,7 +177,6 @@ Go Settings -> Cursor Settings -> MCP -> Add new global MCP server, paste below 
 You could also change localhost into the host ip you deployed the service. After this confige added to the mcp json, you will see the mcp server showes at the Cursor mcp config page, switch it on to enable the server:
 
 <img width="742" alt="image" src="https://github.com/user-attachments/assets/d9b2c97c-c535-4d2a-bcf1-2d2c6343aeb3" />
-
 
 ### Building the Frontend (For Developers)
 
