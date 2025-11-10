@@ -3,6 +3,7 @@ name: Release and Publish
 on:
   push:
     branches:
+      - master
       - main
   workflow_dispatch:
 
@@ -40,7 +41,7 @@ jobs:
         id: semantic
         uses: cycjimmy/semantic-release-action@v4
         with:
-          branch: master
+          branch: ${{ github.ref_name }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -71,7 +72,11 @@ jobs:
 
       - name: Push README update
         if: success()
-        run: git push origin HEAD:${GITHUB_HEAD_REF:-master}
+        shell: bash
+        run: |
+          set -euo pipefail
+          branch_name="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
+          git push origin "HEAD:${branch_name}"
 
   docker:
     needs: release
