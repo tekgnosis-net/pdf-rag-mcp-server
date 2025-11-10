@@ -24,6 +24,7 @@
 - **Release docs**: If semantic-release publishes a new minor or major version (e.g. 1.2.x → 1.3.x), update the README with a short note summarizing the release highlights before you finish the task.
 - **README automation**: `.github/workflows/release.yml` calls `scripts/update-readme-release.mjs` after semantic-release to regenerate the "Release Highlights" block in `README.md` and commits with `[skip ci]`; keep the start/end markers intact and extend the script when the layout changes.
 - **Commit hygiene**: Format commit messages as Conventional Commits (`feat`, `fix`, `chore`, etc.) to ensure correct version bumps.
+- **Release branches**: `Release and Publish` now triggers on both `main`, and forwards the active branch name into semantic-release and the README sync push. When renaming branches, update both the trigger list and any branch-specific env overrides in one change.
 
 
 - **Instruction upkeep**: When you touch the codebase, reassess these guidelines and update them so they continue to reflect current behaviour and testing expectations.
@@ -43,6 +44,7 @@
 - **Static serving**: The backend serves from `backend/app/static`; `vite.config.js` sets `base: '/static/'`, so production builds must land in that folder structure (index + nested `static/assets`).
 - **Frontend build**: `build_frontend.py` installs deps, runs `npm run build`, and copies `frontend/dist` into `backend/app/static`; prefer this script whenever you regenerate assets.
 - **Dev servers**: Run `uv pip install -r backend/requirements.txt` then `uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload` for the backend; `npm install` + `npm run dev` starts Vite with API/WebSocket proxying to `localhost:8000`.
+- **Dev servers**: Run `uv pip install -r backend/requirements.txt` then `uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload` for the backend; `npm install` + `npm run dev` starts Vite with API/WebSocket proxying to the backend host/port derived from `.env` (`APP_PORT`/`APP_HOST`) or the `VITE_BACKEND_*` overrides. Keep those env values in sync with Docker compose when you change exposed ports.
 - **Local images**: Prefer `docker build -t pdf-rag-mcp-server:local .` for backend image changes, then start services with `PDF_RAG_IMAGE=pdf-rag-mcp-server:local docker compose up -d`; avoid `docker compose build` because `docker-compose.yml` lacks a build section.
 - **Combined start**: `uv run run.py` (or `python run.py`) expects pre-built static files and also launches the MCP server thread on port 7800.
 - **MCP endpoint**: `FastApiMCP` mounts `mcp_app` under `/mcp/v1`; Cursor clients typically hit `http://localhost:7800/mcp`, so keep that route stable or update docs/UI hints (see `Dashboard.jsx`).
