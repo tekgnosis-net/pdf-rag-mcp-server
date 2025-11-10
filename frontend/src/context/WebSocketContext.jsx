@@ -1,5 +1,6 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';  
+import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';  
 import { useToast } from '@chakra-ui/react';  
+import axios from 'axios';  
 
 const WebSocketContext = createContext(null);  
 
@@ -9,7 +10,34 @@ export const WebSocketProvider = ({ children }) => {
   const [socket, setSocket] = useState(null);  
   const [isConnected, setIsConnected] = useState(false);  
   const [processingStatus, setProcessingStatus] = useState({});  
+  const [connectionSnapshot, setConnectionSnapshot] = useState({
+    generatedAt: null,
+    websocketClients: [],
+    mcpSessions: [],
+  });
   const toast = useToast();  
+
+  const applySnapshot = useCallback((payload) => {
+    if (!payload || typeof payload !== 'object') {
+      return;
+    }
+
+    setConnectionSnapshot({
+      generatedAt: payload.generated_at ?? null,
+      websocketClients: Array.isArray(payload.websocket_clients) ? payload.websocket_clients : [],
+      mcpSessions: Array.isArray(payload.mcp_sessions) ? payload.mcp_sessions : [],
+    });
+  }, []);
+
+  const refreshSnapshot = useCallback(async () => {
+    try {
+      const { data } = await axios.get('/api/connections');
+      applySnapshot(data);
+    } catch (error) {
+      // Surface via console to avoid noisy toasts for routine polling failures
+      console.error('Failed to refresh connection snapshot', error);
+    }
+  }, [applySnapshot]);
 
   useEffect(() => {  
     let ws;
@@ -27,6 +55,7 @@ export const WebSocketProvider = ({ children }) => {
           duration: 3000,  
           isClosable: true,  
         });  
+        refreshSnapshot();
       };  
   
       ws.onmessage = (event) => {  
@@ -38,6 +67,8 @@ export const WebSocketProvider = ({ children }) => {
             ...prev,  
             [data.filename]: data.status  
           }));  
+        } else if (data.type === 'connection_snapshot') {
+          applySnapshot(data);
         }  
       };  
   
@@ -49,6 +80,7 @@ export const WebSocketProvider = ({ children }) => {
           duration: 3000,  
           isClosable: true,  
         });  
+        refreshSnapshot();
         // Try to reconnect after 3 seconds
         reconnectTimer = setTimeout(() => {
           connect();
@@ -76,10 +108,27 @@ export const WebSocketProvider = ({ children }) => {
         clearTimeout(reconnectTimer);
       }
     };  
-  }, [toast]);  
+  }, [applySnapshot, refreshSnapshot, toast]);  
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      refreshSnapshot();
+    }, 15000);
+
+    return () => {
+      if (intervalId) {
+        window.clearInterval(intervalId);
+      }
+    };
+  }, [refreshSnapshot]);
 
   return (  
-    <WebSocketContext.Provider value={{ isConnected, processingStatus }}>  
+    <WebSocketContext.Provider value={{
+      isConnected,
+      processingStatus,
+      connectionSnapshot,
+      refreshConnectionSnapshot: refreshSnapshot,
+    }}>  
       {children}  
     </WebSocketContext.Provider>  
   );  

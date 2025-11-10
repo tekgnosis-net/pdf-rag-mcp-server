@@ -31,6 +31,9 @@ from fastapi import (
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi_mcp import FastApiMCP
+from fastapi_mcp.transport.sse import FastApiSseTransport as _BaseFastApiSseTransport
+import fastapi_mcp.transport.sse as _mcp_sse_module
+import fastapi_mcp.server as _mcp_server_module
 from PIL import Image
 from sentence_transformers import SentenceTransformer
 from sqlalchemy.orm import Session
@@ -306,7 +309,188 @@ os.makedirs("./uploads", exist_ok=True)
 os.makedirs("./static", exist_ok=True)
 
 # Store active MCP sessions
-_active_sessions = {}
+_active_mcp_sessions: dict[str, dict[str, object]] = {}
+_active_mcp_sessions_lock = asyncio.Lock()
+_last_connection_snapshot_at: dt.datetime | None = None
+
+
+def _isoformat_or_none(value: dt.datetime | None) -> str | None:
+    """Convert a datetime to ISO 8601 format when available."""
+    if isinstance(value, dt.datetime):
+        return value.isoformat()
+    return None
+
+
+async def _list_mcp_sessions() -> list[dict[str, object]]:
+    """Return serialized metadata for tracked MCP SSE sessions."""
+    async with _active_mcp_sessions_lock:
+        snapshot_items = [
+            (session_id, meta.copy()) for session_id, meta in _active_mcp_sessions.items()
+        ]
+
+    sessions: list[dict[str, object]] = []
+    now = dt.datetime.now(dt.timezone.utc)
+
+    for session_id, meta in snapshot_items:
+        connected_at = meta.get("connected_at")
+        disconnected_at = meta.get("disconnected_at")
+
+        uptime_seconds = meta.get("uptime_seconds")
+        if uptime_seconds is None and isinstance(connected_at, dt.datetime):
+            end_time = disconnected_at if isinstance(disconnected_at, dt.datetime) else now
+            uptime_seconds = (end_time - connected_at).total_seconds()
+
+        sessions.append(
+            {
+                "session_id": session_id,
+                "session_uuid": meta.get("session_uuid"),
+                "client_host": meta.get("client_host"),
+                "client_port": meta.get("client_port"),
+                "path": meta.get("path"),
+                "status": meta.get("status", "unknown"),
+                "connected_at": _isoformat_or_none(connected_at),
+                "disconnected_at": _isoformat_or_none(disconnected_at),
+                "last_message_at": _isoformat_or_none(meta.get("last_message_at")),
+                "messages_received": meta.get("messages_received", 0),
+                "user_agent": meta.get("user_agent"),
+                "referer": meta.get("referer"),
+                "uptime_seconds": uptime_seconds,
+            }
+        )
+
+    sessions.sort(key=lambda item: item.get("connected_at") or "", reverse=True)
+    return sessions
+
+
+async def _gather_connection_snapshot() -> dict[str, object]:
+    """Assemble a combined snapshot of WebSocket and MCP client connections."""
+    websocket_clients = manager.list_connections()
+    mcp_sessions = await _list_mcp_sessions()
+    return {
+        "websocket_clients": websocket_clients,
+        "mcp_sessions": mcp_sessions,
+    }
+
+
+async def _broadcast_connection_snapshot(
+    target: WebSocket | None = None,
+    *,
+    force: bool = False,
+) -> None:
+    """Push the latest connection snapshot to clients via WebSocket."""
+
+    global _last_connection_snapshot_at
+
+    if not target and not manager.active_connections:
+        return
+
+    now = dt.datetime.now(dt.timezone.utc)
+
+    if not force and _last_connection_snapshot_at:
+        elapsed = (now - _last_connection_snapshot_at).total_seconds()
+        if elapsed < 1.0:
+            return
+
+    snapshot = await _gather_connection_snapshot()
+    payload = {
+        "type": "connection_snapshot",
+        "generated_at": now.isoformat(),
+        **snapshot,
+    }
+
+    if target is not None:
+        await manager.send_personal_message(payload, target)
+    else:
+        await manager.broadcast(payload)
+
+    _last_connection_snapshot_at = now
+
+
+class TrackingFastApiSseTransport(_BaseFastApiSseTransport):
+    """Instrument FastAPI MCP SSE transport with connection metadata tracking."""
+
+    @asynccontextmanager
+    async def connect_sse(self, scope, receive, send):  # type: ignore[override]
+        session_uuid = None
+        session_id_hex: str | None = None
+        existing_keys = set(self._read_stream_writers.keys())
+        connected_at = dt.datetime.now(dt.timezone.utc)
+
+        client_host = None
+        client_port = None
+        scope_client = scope.get("client") if isinstance(scope, dict) else None
+        if isinstance(scope_client, tuple) and len(scope_client) == 2:
+            client_host, client_port = scope_client
+
+        path = scope.get("path") if isinstance(scope, dict) else None
+        header_map: dict[str, str] = {}
+        raw_headers = scope.get("headers") if isinstance(scope, dict) else None
+        if raw_headers:
+            for header_key, header_value in raw_headers:
+                try:
+                    decoded_key = header_key.decode("latin-1")
+                    decoded_value = header_value.decode("latin-1")
+                except Exception:  # pragma: no cover - defensive decode guard
+                    continue
+                header_map[decoded_key.lower()] = decoded_value
+
+        async with super().connect_sse(scope, receive, send) as (reader, writer):
+            new_keys = set(self._read_stream_writers.keys()) - existing_keys
+            if new_keys:
+                session_uuid = next(iter(new_keys))
+                session_id_hex = session_uuid.hex
+                async with _active_mcp_sessions_lock:
+                    _active_mcp_sessions[session_id_hex] = {
+                        "session_id": session_id_hex,
+                        "session_uuid": str(session_uuid),
+                        "client_host": client_host,
+                        "client_port": client_port,
+                        "path": path,
+                        "status": "connected",
+                        "connected_at": connected_at,
+                        "disconnected_at": None,
+                        "last_message_at": None,
+                        "messages_received": 0,
+                        "user_agent": header_map.get("user-agent"),
+                        "referer": header_map.get("referer") or header_map.get("referrer"),
+                    }
+                await _broadcast_connection_snapshot(force=True)
+
+            try:
+                yield reader, writer
+            finally:
+                if session_uuid and session_id_hex:
+                    disconnected_at = dt.datetime.now(dt.timezone.utc)
+                    async with _active_mcp_sessions_lock:
+                        meta = _active_mcp_sessions.get(session_id_hex)
+                        if meta:
+                            meta["status"] = "disconnected"
+                            meta["disconnected_at"] = disconnected_at
+                            connected_dt = meta.get("connected_at")
+                            if isinstance(connected_dt, dt.datetime):
+                                meta["uptime_seconds"] = (
+                                    disconnected_at - connected_dt
+                                ).total_seconds()
+                    await _broadcast_connection_snapshot(force=True)
+
+    async def handle_fastapi_post_message(self, request):  # type: ignore[override]
+        session_id_param = request.query_params.get("session_id")
+        response = await super().handle_fastapi_post_message(request)
+
+        if session_id_param:
+            now = dt.datetime.now(dt.timezone.utc)
+            async with _active_mcp_sessions_lock:
+                meta = _active_mcp_sessions.get(session_id_param)
+                if meta:
+                    meta["last_message_at"] = now
+                    meta["messages_received"] = int(meta.get("messages_received") or 0) + 1
+
+        await _broadcast_connection_snapshot()
+        return response
+
+
+_mcp_sse_module.FastApiSseTransport = TrackingFastApiSseTransport
+_mcp_server_module.FastApiSseTransport = TrackingFastApiSseTransport
 
 # Mount static file service after all API route definitions
 # Note: This must be done after route definitions but before application startup
@@ -563,6 +747,17 @@ async def delete_document(doc_id: int, db: Session = Depends(get_db)):
     return {"message": f"Document {doc.filename} deleted successfully"}
 
 
+@app.get("/api/connections")
+async def get_connection_snapshot():
+    """Return the latest connection snapshot for dashboard clients."""
+
+    snapshot = await _gather_connection_snapshot()
+    return {
+        "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+        **snapshot,
+    }
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     """WebSocket connection handler for real-time updates.
@@ -571,6 +766,7 @@ async def websocket_endpoint(websocket: WebSocket):
         websocket: WebSocket connection.
     """
     await manager.connect(websocket)
+    await _broadcast_connection_snapshot(force=True)
     try:
         # Initially send all current statuses
         await websocket.send_json({
@@ -586,6 +782,7 @@ async def websocket_endpoint(websocket: WebSocket):
             
     except WebSocketDisconnect:
         manager.disconnect(websocket)
+        await _broadcast_connection_snapshot(force=True)
 
 
 def _format_vector_search_results(query: str, limit: int, offset: int):
