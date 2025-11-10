@@ -1,3 +1,11 @@
+## [1.7.1](https://github.com/tekgnosis-net/pdf-rag-mcp-server/compare/v1.7.0...v1.7.1) (2025-11-10)
+
+
+### Bug Fixes
+
+* align vite proxy with backend port ([33671c0](https://github.com/tekgnosis-net/pdf-rag-mcp-server/commit/33671c0cf0c4341a13178f66144c594863fcd507))
+* **ci:** allow release workflow on main and master ([e53bd9d](https://github.com/tekgnosis-net/pdf-rag-mcp-server/commit/e53bd9d8af4afd26f8df662f4873507351c5135a))
+
 # [1.7.0](https://github.com/tekgnosis-net/pdf-rag-mcp-server/compare/v1.6.0...v1.7.0) (2025-11-10)
 
 
